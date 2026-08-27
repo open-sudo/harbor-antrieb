@@ -1,27 +1,27 @@
 # Harbor Antrieb
 
-Harbor integration for running InfraSet tasks on Antrieb-managed infrastructure.
-It provides the custom environment, agent, and verifier used by InfraSet tasks.
+Harbor provider for running datasets on Antrieb-managed infrastructure. It
+provides a custom environment, agent, and verifier that any Harbor dataset can
+load through import paths.
 
 ## Normal use
 
-Users do not need to clone Harbor or this repository. The InfraSet task runner
-fetches Harbor and this provider from GitHub:
+Users do not need to clone Harbor or this repository. A dataset runner can fetch
+Harbor and this provider from GitHub:
 
 ```bash
-cd ~/infraset
 export ANTRIEB_TOKEN='ant_...'
-./run-task.sh ./tasks/greenfield/<task-name>
+uv run --no-project \
+  --with 'harbor-antrieb @ git+https://github.com/open-sudo/harbor-antrieb.git' \
+  harbor run --path /path/to/dataset/task ...
 ```
 
-Results are written to `~/infraset/jobs/<task-name>`.
-
-The task repository owns any runner-specific configuration. This provider only
-requires the Antrieb connection settings described below.
+Dataset repositories own their task layout, runner options, and result storage.
+This provider only requires the Antrieb connection settings described below.
 
 ## Provider import paths
 
-Tasks select the provider through Harbor's standard import paths:
+Datasets select the provider through Harbor's standard import paths:
 
 ```text
 harbor_antrieb.agent:AntriebHostAgent
@@ -31,21 +31,21 @@ harbor_antrieb.verifier:AntriebVerifier
 
 No Harbor source changes or Docker image are required.
 
-## Task structure
+## Dataset tasks
 
-An InfraSet task is a directory containing `task.toml` and usually:
+The exact task layout is defined by the dataset. A typical Harbor task contains:
 
 ```text
 task-name/
 ├── task.toml
-├── environment/infraset.toml
+├── environment/
 ├── instructions.md
-├── prepare/                 # optional trusted brownfield setup
-└── verifier/                # task-specific semantic checks
+├── prepare/                 # optional dataset-owned preparation
+└── verifier/                # optional dataset-owned checks
 ```
 
-The task declares its topology in `environment/infraset.toml`. Preparation,
-execution, and verification happen on the Harbor host.
+Preparation, execution, and verification happen on the Harbor host. Dataset
+authors decide which task files and checks are appropriate.
 
 ## Development
 
@@ -57,7 +57,7 @@ uv run pytest -q tests/unit
 ```
 
 The distribution is named `harbor-antrieb`; its Python import package is
-`infraset`.
+`harbor_antrieb`.
 
 ## Credentials
 
