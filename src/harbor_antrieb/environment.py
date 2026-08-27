@@ -17,18 +17,18 @@ from typing import Any, override
 from harbor.environments.base import BaseEnvironment, ExecResult
 from harbor.environments.capabilities import EnvironmentCapabilities
 
-from infraset.client import AntriebClient, AntriebMCPError
-from infraset.config import InfraSetDefinition, PrepareConfig
-from infraset.errors import ClusterExpiredError
-from infraset.initializers import InitializationResult, run_initializers
-from infraset.runbooks import BaseRunbook
+from harbor_antrieb.client import AntriebClient, AntriebMCPError
+from harbor_antrieb.config import AntriebDefinition, PrepareConfig
+from harbor_antrieb.errors import ClusterExpiredError
+from harbor_antrieb.initializers import InitializationResult, run_initializers
+from harbor_antrieb.runbooks import BaseRunbook
 
 
-class InfraSetEnvironment(BaseEnvironment):
+class AntriebEnvironment(BaseEnvironment):
     """A Harbor environment backed by one provider-managed Antrieb cluster."""
 
     _TRANSFER_CHUNK_SIZE = 48 * 1024
-    _REMOTE_EXEC_DIR = "/run/infraset/exec"
+    _REMOTE_EXEC_DIR = "/run/harbor_antrieb/exec"
     _EXEC_DONE_PREFIX = "__INFRASET_DONE__:"
     _EXEC_RUNNING = "__INFRASET_RUNNING__"
 
@@ -43,9 +43,9 @@ class InfraSetEnvironment(BaseEnvironment):
         **kwargs: Any,
     ) -> None:
         environment_dir = Path(kwargs.get("environment_dir", args[0] if args else ""))
-        definition_path = environment_dir / "infraset.toml"
+        definition_path = environment_dir / "harbor_antrieb.toml"
         self.definition = (
-            InfraSetDefinition.model_validate(
+            AntriebDefinition.model_validate(
                 tomllib.loads(definition_path.read_text())
             )
             if definition_path.is_file()
@@ -82,12 +82,12 @@ class InfraSetEnvironment(BaseEnvironment):
     @override
     def preflight(cls) -> None:
         if not os.environ.get("ANTRIEB_TOKEN"):
-            raise SystemExit("InfraSet's Antrieb provider requires ANTRIEB_TOKEN")
+            raise SystemExit("Antrieb's Antrieb provider requires ANTRIEB_TOKEN")
 
     @staticmethod
     @override
     def type() -> str:
-        return "infraset"
+        return "harbor_antrieb"
 
     @property
     @override
@@ -96,10 +96,10 @@ class InfraSetEnvironment(BaseEnvironment):
 
     @override
     def _validate_definition(self) -> None:
-        definition_path = self.environment_dir / "infraset.toml"
+        definition_path = self.environment_dir / "harbor_antrieb.toml"
         if self.definition is None:
             raise FileNotFoundError(
-                f"InfraSet environment definition not found: {definition_path}"
+                f"Antrieb environment definition not found: {definition_path}"
             )
         conflicting = (
             "Dockerfile",
@@ -108,12 +108,12 @@ class InfraSetEnvironment(BaseEnvironment):
         )
         if any((self.environment_dir / name).exists() for name in conflicting):
             raise ValueError(
-                "InfraSet uses environment/infraset.toml, not Dockerfile or Compose"
+                "Antrieb uses environment/infraset.toml, not Dockerfile or Compose"
             )
 
     def _require_started(self) -> tuple[AntriebClient, str]:
         if self._client is None or self.remote_session_id is None:
-            raise RuntimeError("InfraSet environment has not been started")
+            raise RuntimeError("Antrieb environment has not been started")
         return self._client, self.remote_session_id
 
     def assert_cluster_active(self) -> None:
@@ -204,7 +204,7 @@ class InfraSetEnvironment(BaseEnvironment):
         assert self.definition is not None
         if self.clusters_provisioned >= self.definition.max_clusters:
             raise RuntimeError(
-                "InfraSet managed-cluster quota exhausted: "
+                "Antrieb managed-cluster quota exhausted: "
                 f"{self.clusters_provisioned}/{self.definition.max_clusters}"
             )
         token = os.environ.get("ANTRIEB_TOKEN")
@@ -259,7 +259,7 @@ class InfraSetEnvironment(BaseEnvironment):
             return
         assert self.definition is not None
         if self._client is None:
-            raise RuntimeError("InfraSet Antrieb client is unavailable")
+            raise RuntimeError("Antrieb Antrieb client is unavailable")
         loaded: list[BaseRunbook] = []
         for fq_name in self.definition.base_runbooks:
             try:
@@ -293,7 +293,7 @@ class InfraSetEnvironment(BaseEnvironment):
         assert self.definition is not None
         if self.clusters_provisioned >= self.definition.max_clusters:
             raise RuntimeError(
-                "InfraSet managed-cluster quota exhausted: "
+                "Antrieb managed-cluster quota exhausted: "
                 f"{self.clusters_provisioned}/{self.definition.max_clusters}"
             )
         await self.stop(delete=True)
@@ -616,10 +616,10 @@ class InfraSetEnvironment(BaseEnvironment):
         if not self.definition.prepare.enabled:
             return
         if self.definition.prepare.mode == "static":
-            from infraset.static_preparer import run_static_prepare
+            from harbor_antrieb.static_preparer import run_static_prepare
 
             await run_static_prepare(self, self.definition.prepare)
         else:
-            from infraset.ai_preparer import run_ai_prepare
+            from harbor_antrieb.ai_preparer import run_ai_prepare
 
             await run_ai_prepare(self, self.definition.prepare)

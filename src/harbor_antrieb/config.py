@@ -18,7 +18,7 @@ class PrepareConfig(BaseModel):
     prompt: str = "prepare/prompt.md"
 
 
-class InfraSetDefinition(BaseModel):
+class AntriebDefinition(BaseModel):
     cluster: list[str | dict[str, Any]]
     max_clusters: int = Field(default=1, ge=1)
     initialize: list[str] = Field(default_factory=list, max_length=16)
@@ -32,7 +32,7 @@ class InfraSetDefinition(BaseModel):
     prepare: PrepareConfig = Field(default_factory=PrepareConfig)
 
     @model_validator(mode="after")
-    def validate_cluster(self) -> "InfraSetDefinition":
+    def validate_cluster(self) -> "AntriebDefinition":
         if not self.cluster:
             raise ValueError("cluster must contain at least one image")
         if len(self.initialize) != len(set(self.initialize)):

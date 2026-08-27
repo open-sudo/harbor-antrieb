@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from infraset.agent_runner import _build_backend_command
+from harbor_antrieb.agent_runner import _build_backend_command
 
 
 class ModernCodexBackend:

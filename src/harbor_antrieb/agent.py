@@ -10,10 +10,10 @@ from harbor.agents.model_connection import ModelConnectionSpec
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 
-from infraset.agent_runner import run_structured_agent, run_structured_log_agent
-from infraset.errors import ClusterExpiredError
-from infraset.exec_bridge import redact_data, redact_text
-from infraset.runbooks import render_platform_references
+from harbor_antrieb.agent_runner import run_structured_agent, run_structured_log_agent
+from harbor_antrieb.errors import ClusterExpiredError
+from harbor_antrieb.exec_bridge import redact_data, redact_text
+from harbor_antrieb.runbooks import render_platform_references
 
 
 _POSTMORTEM_AUDIT_BUDGET = 20 * 1024
@@ -215,8 +215,8 @@ def _postmortem_audit_evidence(
     return _truncate_utf8(render([]), limit)
 
 
-class InfraSetHostAgent(BaseAgent):
-    """Host-side executor for an InfraSet managed cluster."""
+class AntriebHostAgent(BaseAgent):
+    """Host-side executor for an Antrieb managed cluster."""
 
     MODEL_CONNECTION = ModelConnectionSpec()
 
@@ -247,7 +247,7 @@ class InfraSetHostAgent(BaseAgent):
     @staticmethod
     @override
     def name() -> str:
-        return "infraset-host"
+        return "harbor_antrieb-host"
 
     @override
     def version(self) -> str:
@@ -261,7 +261,7 @@ class InfraSetHostAgent(BaseAgent):
         nodes = getattr(environment, "nodes", ())
         endpoint = getattr(environment, "endpoint", None)
         if not session_id or not nodes or not endpoint:
-            raise TypeError("InfraSetHostAgent requires a running InfraSetEnvironment")
+            raise TypeError("AntriebHostAgent requires a running AntriebEnvironment")
         return str(session_id), tuple(nodes), str(endpoint)
 
     @staticmethod
@@ -284,7 +284,7 @@ class InfraSetHostAgent(BaseAgent):
         recreate = getattr(environment, "recreate", None)
         if not callable(recreate):
             raise TypeError(
-                "InfraSetHostAgent retries require InfraSetEnvironment.recreate()"
+                "AntriebHostAgent retries require AntriebEnvironment.recreate()"
             )
         await recreate()
 
@@ -326,8 +326,8 @@ yourself and do not blindly repeat the failed approach:
 {json.dumps(diagnoses, indent=2)}
 """
         return f"""You are the executor for an infrastructure-agent benchmark.
-The benchmark machines are an InfraSet managed cluster backed by Antrieb. You run
-outside that cluster and must use only the InfraSet exec tool to inspect or modify
+The benchmark machines are an Antrieb managed cluster backed by Antrieb. You run
+outside that cluster and must use only the Antrieb exec tool to inspect or modify
 it. Address each node directly through the tool; do not use one node as the control
 plane for another.
 Do not provision, replace, save, or delete the cluster. Do not install the agent,
@@ -489,7 +489,7 @@ Redacted executor CLI stderr:
                 (attempt_dir / "executor-raw.txt").write_text(redact_text(raw))
                 if not audit_path.read_text().strip():
                     raise RuntimeError(
-                        "Executor completed without making an InfraSet exec call; "
+                        "Executor completed without making an Antrieb exec call; "
                         "the managed tool bridge was unavailable"
                     )
                 if report.get("status") == "completed":
@@ -592,10 +592,10 @@ Redacted executor CLI stderr:
                     "infraset_attempt_history": history,
                 }
                 raise RuntimeError(
-                    "InfraSet executor exhausted its managed-cluster quota "
+                    "Antrieb executor exhausted its managed-cluster quota "
                     f"after {attempt} attempt(s); see attempt-history.json"
                 )
 
             await self._recreate(environment)
 
-        raise RuntimeError("InfraSet executor retry loop ended unexpectedly")
+        raise RuntimeError("Antrieb executor retry loop ended unexpectedly")

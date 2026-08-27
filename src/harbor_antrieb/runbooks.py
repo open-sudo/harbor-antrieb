@@ -18,7 +18,7 @@ def platform_references(environment: Any) -> tuple[BaseRunbook, ...]:
         isinstance(reference, BaseRunbook) for reference in references
     ):
         raise TypeError(
-            "InfraSet environment returned malformed base-runbook references"
+            "Antrieb environment returned malformed base-runbook references"
         )
     return references
 

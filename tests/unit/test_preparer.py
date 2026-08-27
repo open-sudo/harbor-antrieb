@@ -7,9 +7,9 @@ import pytest
 
 from harbor.environments.base import ExecResult
 from harbor.models.trial.paths import TrialPaths
-from infraset.ai_preparer import run_ai_prepare
-from infraset.config import PrepareConfig
-from infraset.runbooks import BaseRunbook
+from harbor_antrieb.ai_preparer import run_ai_prepare
+from harbor_antrieb.config import PrepareConfig
+from harbor_antrieb.runbooks import BaseRunbook
 
 
 @pytest.mark.asyncio
@@ -49,7 +49,7 @@ async def test_ai_preparer_runs_agent_then_static_baseline(
             "raw-output",
         )
 
-    monkeypatch.setattr("infraset.ai_preparer.run_structured_agent", fake_runner)
+    monkeypatch.setattr("harbor_antrieb.ai_preparer.run_structured_agent", fake_runner)
 
     class Environment:
         nodes = ("node1", "node2")

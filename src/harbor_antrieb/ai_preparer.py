@@ -3,10 +3,10 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from infraset.agent_runner import run_structured_agent
-from infraset.config import PrepareConfig
-from infraset.runbooks import render_platform_references
-from infraset.static_preparer import capture_static_baseline
+from harbor_antrieb.agent_runner import run_structured_agent
+from harbor_antrieb.config import PrepareConfig
+from harbor_antrieb.runbooks import render_platform_references
+from harbor_antrieb.static_preparer import capture_static_baseline
 
 
 def _preparation_schema() -> dict[str, Any]:
@@ -31,7 +31,7 @@ def _load_prompt(environment: Any, config: PrepareConfig) -> str:
     if not prompt_path.is_relative_to(task_root):
         raise ValueError("AI prepare prompt path must remain inside the task")
     if not prompt_path.is_file():
-        raise FileNotFoundError(f"InfraSet AI prepare prompt not found: {prompt_path}")
+        raise FileNotFoundError(f"Antrieb AI prepare prompt not found: {prompt_path}")
     task_instruction_path = task_root / "instruction.md"
     task_instruction = (
         task_instruction_path.read_text()
@@ -39,7 +39,7 @@ def _load_prompt(environment: Any, config: PrepareConfig) -> str:
         else "(task instruction unavailable)"
     )
     return f"""You prepare the initial brownfield state for an infrastructure-agent
-benchmark. Work only through the InfraSet exec tool and address managed nodes
+benchmark. Work only through the Antrieb exec tool and address managed nodes
 directly. Create the starting state described below, including intentional legacy or
 partially configured state. Do not complete the executor's task. Do not provision,
 replace, save, or delete the cluster. Finish with a concise structured report.
@@ -89,7 +89,7 @@ async def run_ai_prepare(environment: Any, config: PrepareConfig) -> None:
     (output_dir / "ai-preparer-output.json").write_text(json.dumps(report, indent=2))
     (output_dir / "ai-preparer-raw.json").write_text(raw)
     if not audit_path.read_text().strip():
-        raise RuntimeError("AI preparer completed without an InfraSet exec call")
+        raise RuntimeError("AI preparer completed without an Antrieb exec call")
     if report.get("status") != "completed":
         raise RuntimeError(
             f"AI preparer did not complete: {report.get('summary', 'blocked')}"

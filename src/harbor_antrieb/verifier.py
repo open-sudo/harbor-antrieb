@@ -11,18 +11,18 @@ from harbor.models.verifier.result import VerifierResult
 from harbor.verifier.base import BaseVerifier
 from pydantic import BaseModel, ConfigDict
 
-from infraset.agent_runner import run_structured_agent
-from infraset.config import (
+from harbor_antrieb.agent_runner import run_structured_agent
+from harbor_antrieb.config import (
     JudgeConfig,
     SemanticAssertionConfig,
     SemanticCommandConfig,
     SemanticPlanConfig,
     SemanticProbeConfig,
 )
-from infraset.evaluation_policy import DISABLED_EVALUATION_DIMENSIONS
-from infraset.runbooks import render_platform_references
+from harbor_antrieb.evaluation_policy import DISABLED_EVALUATION_DIMENSIONS
+from harbor_antrieb.runbooks import render_platform_references
 
-__all__ = ["InfraSetVerifier"]
+__all__ = ["AntriebVerifier"]
 
 
 class _Evidence(BaseModel):
@@ -125,7 +125,7 @@ def _report_schema() -> dict[str, Any]:
     }
 
 
-class InfraSetVerifier(BaseVerifier):
+class AntriebVerifier(BaseVerifier):
     """Collect semantic evidence and score atomic authored assertions."""
 
     def __init__(
@@ -173,7 +173,7 @@ class InfraSetVerifier(BaseVerifier):
         if not path.is_relative_to(task_root):
             raise ValueError(f"{label} path must remain inside the task directory")
         if not path.is_file():
-            raise FileNotFoundError(f"InfraSet {label} not found: {path}")
+            raise FileNotFoundError(f"Antrieb {label} not found: {path}")
         return path
 
     def _load(self) -> tuple[SemanticPlanConfig, JudgeConfig]:
@@ -199,7 +199,7 @@ class InfraSetVerifier(BaseVerifier):
         endpoint = getattr(self.environment, "endpoint", None)
         if not session_id or not nodes or not endpoint:
             raise TypeError(
-                "InfraSetVerifier requires a running InfraSetEnvironment"
+                "AntriebVerifier requires a running AntriebEnvironment"
             )
         return str(session_id), nodes, str(endpoint)
 
@@ -269,7 +269,7 @@ Atomic assertions supported by this probe:
         all_succeeded = True
         environment_exec = getattr(self.environment, "exec_on_node", None)
         if not callable(environment_exec):
-            raise TypeError("InfraSetVerifier requires exec_on_node support")
+            raise TypeError("AntriebVerifier requires exec_on_node support")
 
         for command in commands:
             record: dict[str, Any] = {

@@ -11,8 +11,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
-from infraset.client import AntriebClient
-from infraset.errors import ClusterExpiredError
+from harbor_antrieb.client import AntriebClient
+from harbor_antrieb.errors import ClusterExpiredError
 
 
 _AUDIT_TEXT_LIMIT = 16 * 1024
@@ -156,7 +156,7 @@ def _argument_parser() -> argparse.ArgumentParser:
 
 
 def _load_descriptor(path: Path | None) -> dict[str, Any]:
-    descriptor_path = path or Path("/run/infraset/session.json")
+    descriptor_path = path or Path("/run/harbor_antrieb/session.json")
     try:
         loaded = json.loads(descriptor_path.read_text())
     except (OSError, json.JSONDecodeError):
@@ -169,7 +169,7 @@ def _load_token(token_file: Path | None) -> str | None:
     if token:
         return token
     try:
-        return (token_file or Path("/etc/infraset/token")).read_text().strip()
+        return (token_file or Path("/etc/harbor_antrieb/token")).read_text().strip()
     except OSError:
         return None
 
@@ -265,7 +265,7 @@ class ExecBridge:
                 "result": {
                     "protocolVersion": "2025-06-18",
                     "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "infraset", "version": "0.1.0"},
+                    "serverInfo": {"name": "harbor_antrieb", "version": "0.1.0"},
                 },
             }
         if method == "ping":
@@ -425,7 +425,7 @@ def main() -> None:
     token = _load_token(args.token_file)
     if not isinstance(session_id, str) or not token:
         raise SystemExit(
-            "infraset bridge requires ANTRIEB_TOKEN and a managed session descriptor"
+            "harbor_antrieb bridge requires ANTRIEB_TOKEN and a managed session descriptor"
         )
     descriptor_nodes = descriptor.get("nodes", [])
     node_values = args.node

@@ -9,8 +9,8 @@ import pytest
 
 from harbor.models.task.config import EnvironmentConfig
 from harbor.models.trial.paths import TrialPaths
-from infraset.environment import InfraSetEnvironment
-from infraset.errors import ClusterExpiredError
+from harbor_antrieb.environment import AntriebEnvironment
+from harbor_antrieb.errors import ClusterExpiredError
 
 
 class FakeClient:
@@ -68,15 +68,15 @@ def make_environment(
     tmp_path: Path,
     definition: str | None = None,
     **environment_kwargs: Any,
-) -> InfraSetEnvironment:
+) -> AntriebEnvironment:
     environment_dir = tmp_path / "task" / "environment"
     environment_dir.mkdir(parents=True)
-    (environment_dir / "infraset.toml").write_text(
+    (environment_dir / "harbor_antrieb.toml").write_text(
         definition or ('cluster = ["ubuntu24.04 x2"]\ncontrol_node = "node1"\n')
     )
     trial_paths = TrialPaths(tmp_path / "trial")
     trial_paths.mkdir()
-    return InfraSetEnvironment(
+    return AntriebEnvironment(
         environment_dir=environment_dir,
         environment_name="example",
         session_id="trial-env",
@@ -92,7 +92,7 @@ async def test_environment_owns_cluster_lifecycle(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("ANTRIEB_TOKEN", "secret")
-    monkeypatch.setattr("infraset.environment.AntriebClient", FakeClient)
+    monkeypatch.setattr("harbor_antrieb.environment.AntriebClient", FakeClient)
     environment = make_environment(tmp_path)
 
     await environment.start(force_build=False)
@@ -160,7 +160,7 @@ async def test_environment_recreates_and_repeats_harness_preparation(
         lifecycle.append("prepare")
 
     monkeypatch.setenv("ANTRIEB_TOKEN", "secret")
-    monkeypatch.setattr("infraset.environment.AntriebClient", RecreateClient)
+    monkeypatch.setattr("harbor_antrieb.environment.AntriebClient", RecreateClient)
     environment = make_environment(
         tmp_path,
         'cluster = ["ubuntu24.04 x2"]\nmax_clusters = 2\n',
@@ -243,7 +243,7 @@ async def test_initialize_registers_rhel_without_persisting_credentials(
     credentials.chmod(0o600)
     monkeypatch.setenv("ANTRIEB_TOKEN", "secret")
     monkeypatch.setenv("HARBOR_ANTRIEB_INITIALIZE_CREDENTIALS_FILE", str(credentials))
-    monkeypatch.setattr("infraset.environment.AntriebClient", RhsmClient)
+    monkeypatch.setattr("harbor_antrieb.environment.AntriebClient", RhsmClient)
     environment = make_environment(
         tmp_path,
         'cluster = ["rhel9.8 x2"]\ninitialize = ["rhsm"]\n',
@@ -340,7 +340,7 @@ async def test_failed_initialize_deletes_cluster_before_prepare(
 
     monkeypatch.setenv("ANTRIEB_TOKEN", "secret")
     monkeypatch.setenv("HARBOR_ANTRIEB_INITIALIZE_CREDENTIALS_FILE", str(credentials))
-    monkeypatch.setattr("infraset.environment.AntriebClient", FailedRhsmClient)
+    monkeypatch.setattr("harbor_antrieb.environment.AntriebClient", FailedRhsmClient)
     environment = make_environment(
         tmp_path,
         'cluster = ["rhel9.8"]\ninitialize = ["rhsm"]\n',
@@ -392,7 +392,7 @@ async def test_initializer_rejects_exposed_credentials_file(
     credentials.chmod(0o644)
     monkeypatch.setenv("ANTRIEB_TOKEN", "secret")
     monkeypatch.setenv("HARBOR_ANTRIEB_INITIALIZE_CREDENTIALS_FILE", str(credentials))
-    monkeypatch.setattr("infraset.environment.AntriebClient", RhsmClient)
+    monkeypatch.setattr("harbor_antrieb.environment.AntriebClient", RhsmClient)
     environment = make_environment(
         tmp_path,
         'cluster = ["rhel9.8"]\ninitialize = ["rhsm"]\n',
@@ -431,7 +431,7 @@ async def test_malformed_base_runbook_aborts_before_provision(
             return await super().call_tool(name, arguments)
 
     monkeypatch.setenv("ANTRIEB_TOKEN", "secret")
-    monkeypatch.setattr("infraset.environment.AntriebClient", MalformedRunbookClient)
+    monkeypatch.setattr("harbor_antrieb.environment.AntriebClient", MalformedRunbookClient)
     environment = make_environment(tmp_path)
 
     with pytest.raises(RuntimeError, match="malformed base runbook"):
@@ -448,7 +448,7 @@ async def test_environment_rejects_exec_after_reported_expiration(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("ANTRIEB_TOKEN", "secret")
-    monkeypatch.setattr("infraset.environment.AntriebClient", FakeClient)
+    monkeypatch.setattr("harbor_antrieb.environment.AntriebClient", FakeClient)
     environment = make_environment(tmp_path)
     await environment.start(force_build=False)
     client = environment._client
@@ -558,7 +558,7 @@ async def test_static_prepare_runs_setup_then_captures_baseline(
         'command = "observe-node2"\n'
     )
     monkeypatch.setenv("ANTRIEB_TOKEN", "secret")
-    monkeypatch.setattr("infraset.environment.AntriebClient", PrepareClient)
+    monkeypatch.setattr("harbor_antrieb.environment.AntriebClient", PrepareClient)
 
     await environment.start(force_build=False)
 
@@ -653,7 +653,7 @@ async def test_failed_prepare_stops_later_stages_and_deletes_cluster(
         '[[observations]]\nid = "unused"\nnode = "node1"\ncommand = "unused"\n'
     )
     monkeypatch.setenv("ANTRIEB_TOKEN", "secret")
-    monkeypatch.setattr("infraset.environment.AntriebClient", FailedPrepareClient)
+    monkeypatch.setattr("harbor_antrieb.environment.AntriebClient", FailedPrepareClient)
 
     with pytest.raises(RuntimeError, match="static setup failed"):
         await environment.start(force_build=False)
@@ -678,7 +678,7 @@ async def test_exec_uses_bash_for_harbor_pipefail(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("ANTRIEB_TOKEN", "secret")
-    monkeypatch.setattr("infraset.environment.AntriebClient", FakeClient)
+    monkeypatch.setattr("harbor_antrieb.environment.AntriebClient", FakeClient)
     environment = make_environment(tmp_path)
     await environment.start(force_build=False)
 
@@ -744,7 +744,7 @@ async def test_exec_detaches_and_preserves_result(
             return {"stdout": "", "stderr": "", "exit_code": 0}
 
     monkeypatch.setenv("ANTRIEB_TOKEN", "secret")
-    monkeypatch.setattr("infraset.environment.AntriebClient", ResultClient)
+    monkeypatch.setattr("harbor_antrieb.environment.AntriebClient", ResultClient)
     environment = make_environment(tmp_path)
     await environment.start(force_build=False)
     client = environment._client

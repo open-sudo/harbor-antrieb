@@ -5,7 +5,7 @@ from typing import Any
 
 import httpx
 
-from infraset.errors import ClusterExpiredError, is_cluster_expired
+from harbor_antrieb.errors import ClusterExpiredError, is_cluster_expired
 
 
 class AntriebMCPError(RuntimeError):
@@ -91,7 +91,7 @@ class AntriebClient:
             {
                 "protocolVersion": "2025-06-18",
                 "capabilities": {},
-                "clientInfo": {"name": "infraset", "version": "0.1.0"},
+                "clientInfo": {"name": "harbor_antrieb", "version": "0.1.0"},
             },
         )
 

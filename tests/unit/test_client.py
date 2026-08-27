@@ -3,8 +3,8 @@ from typing import Any
 import httpx
 import pytest
 
-from infraset.client import AntriebClient
-from infraset.errors import ClusterExpiredError
+from harbor_antrieb.client import AntriebClient
+from harbor_antrieb.errors import ClusterExpiredError
 
 
 @pytest.mark.asyncio

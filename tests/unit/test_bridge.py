@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from infraset.agent_runner import (
+from harbor_antrieb.agent_runner import (
     _communicate_with_cluster_guard,
     agent_environment,
     append_audit_argument,
@@ -21,13 +21,13 @@ from infraset.agent_runner import (
     log_agent_environment,
     run_structured_agent,
 )
-from infraset.errors import ClusterExpiredError
-from infraset.exec_bridge import ExecBridge
+from harbor_antrieb.errors import ClusterExpiredError
+from harbor_antrieb.exec_bridge import ExecBridge
 from rewardkit.models import MCPServerConfig
 
 
 def _bridge_command(*args: str) -> list[str]:
-    return [sys.executable, "-m", "infraset.exec_bridge", *args]
+    return [sys.executable, "-m", "harbor_antrieb.exec_bridge", *args]
 
 
 def test_python_bridge_exposes_only_exec() -> None:
@@ -70,7 +70,7 @@ def test_python_bridge_reads_provider_owned_token_file(tmp_path: Path) -> None:
         check=True,
     )
 
-    assert json.loads(process.stdout)["result"]["serverInfo"]["name"] == "infraset"
+    assert json.loads(process.stdout)["result"]["serverInfo"]["name"] == "harbor_antrieb"
 
 
 def test_bridge_rejects_unknown_managed_node_without_remote_call() -> None:
@@ -528,11 +528,11 @@ async def test_runner_recovers_valid_report_when_cluster_expires_during_finaliza
         return output.encode(), b"cluster expired", "lease expired"
 
     monkeypatch.setattr(
-        "infraset.agent_runner.get_agent", lambda _judge, _workspace: FakeBackend()
+        "harbor_antrieb.agent_runner.get_agent", lambda _judge, _workspace: FakeBackend()
     )
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
     monkeypatch.setattr(
-        "infraset.agent_runner._communicate_with_cluster_guard", fake_guard
+        "harbor_antrieb.agent_runner._communicate_with_cluster_guard", fake_guard
     )
     workspace = tmp_path / "verifier"
     workspace.mkdir()
@@ -604,11 +604,11 @@ async def test_runner_recovers_valid_report_after_expired_exec_attempt(
         return json.dumps(report).encode(), b"cluster expired", "lease expired"
 
     monkeypatch.setattr(
-        "infraset.agent_runner.get_agent", lambda _judge, _workspace: FakeBackend()
+        "harbor_antrieb.agent_runner.get_agent", lambda _judge, _workspace: FakeBackend()
     )
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
     monkeypatch.setattr(
-        "infraset.agent_runner._communicate_with_cluster_guard", fake_guard
+        "harbor_antrieb.agent_runner._communicate_with_cluster_guard", fake_guard
     )
     workspace = tmp_path / "verifier"
     workspace.mkdir()
@@ -686,11 +686,11 @@ async def test_runner_recovers_valid_report_when_cli_lingers_after_evidence(
         return json.dumps(report).encode(), b"", None
 
     monkeypatch.setattr(
-        "infraset.agent_runner.get_agent", lambda _judge, _workspace: FakeBackend()
+        "harbor_antrieb.agent_runner.get_agent", lambda _judge, _workspace: FakeBackend()
     )
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
     monkeypatch.setattr(
-        "infraset.agent_runner._communicate_with_cluster_guard", fake_guard
+        "harbor_antrieb.agent_runner._communicate_with_cluster_guard", fake_guard
     )
     workspace = tmp_path / "verifier"
     workspace.mkdir()
@@ -724,7 +724,7 @@ def test_claude_uses_invocation_scoped_mcp_config(tmp_path: Path) -> None:
         name="infraset_1234",
         transport="stdio",
         command="/venv/bin/python",
-        args=("-m", "infraset.exec_bridge", "--session-id", "managed-session"),
+        args=("-m", "harbor_antrieb.exec_bridge", "--session-id", "managed-session"),
         allowed_tools=("exec",),
     )
 
@@ -742,7 +742,7 @@ def test_claude_uses_invocation_scoped_mcp_config(tmp_path: Path) -> None:
                 "command": "/venv/bin/python",
                 "args": [
                     "-m",
-                    "infraset.exec_bridge",
+                    "harbor_antrieb.exec_bridge",
                     "--session-id",
                     "managed-session",
                 ],
@@ -778,7 +778,7 @@ def test_codex_uses_invocation_scoped_mcp_config() -> None:
         name="infraset_1234",
         transport="stdio",
         command="/venv/bin/python",
-        args=("-m", "infraset.exec_bridge", "--session-id", "managed-session"),
+        args=("-m", "harbor_antrieb.exec_bridge", "--session-id", "managed-session"),
         allowed_tools=("exec",),
     )
 
@@ -792,7 +792,7 @@ def test_codex_uses_invocation_scoped_mcp_config() -> None:
     assert 'mcp_servers.infraset_1234.env_vars=["ANTRIEB_TOKEN"]' in command
     assert (
         'mcp_servers.infraset_1234.args=["-m",'
-        '"infraset.exec_bridge","--session-id","managed-session"]' in command
+        '"harbor_antrieb.exec_bridge","--session-id","managed-session"]' in command
     )
 
 

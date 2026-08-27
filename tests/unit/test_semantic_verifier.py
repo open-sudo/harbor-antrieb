@@ -6,8 +6,8 @@ from typing import Any
 import pytest
 
 from harbor.models.trial.paths import TrialPaths
-from infraset.runbooks import BaseRunbook
-from infraset.verifier import InfraSetVerifier
+from harbor_antrieb.runbooks import BaseRunbook
+from harbor_antrieb.verifier import AntriebVerifier
 
 
 def _write_task(task_dir: Path) -> None:
@@ -132,8 +132,8 @@ async def test_verifier_excludes_disabled_security_dimension(
         kwargs["output_validator"](report)
         return report, "raw"
 
-    monkeypatch.setattr("infraset.verifier.run_structured_agent", fake_runner)
-    verifier = InfraSetVerifier(
+    monkeypatch.setattr("harbor_antrieb.verifier.run_structured_agent", fake_runner)
+    verifier = AntriebVerifier(
         task=task,
         trial_paths=trial_paths,
         environment=environment,
@@ -194,7 +194,7 @@ def test_verifier_scores_assertions_from_one_probe_independently(
 ) -> None:
     task_dir = tmp_path / "task"
     _write_task(task_dir)
-    verifier = InfraSetVerifier(
+    verifier = AntriebVerifier(
         task=SimpleNamespace(paths=SimpleNamespace(task_dir=task_dir)),
         trial_paths=SimpleNamespace(),
         environment=SimpleNamespace(),
@@ -241,7 +241,7 @@ def test_verifier_reserves_one_cleanup_call_per_mutating_probe_target(
 ) -> None:
     task_dir = tmp_path / "task"
     _write_task(task_dir)
-    verifier = InfraSetVerifier(
+    verifier = AntriebVerifier(
         task=SimpleNamespace(paths=SimpleNamespace(task_dir=task_dir)),
         trial_paths=SimpleNamespace(),
         environment=SimpleNamespace(),
@@ -265,7 +265,7 @@ def test_verifier_propagates_prerequisite_indeterminate(
 ) -> None:
     task_dir = tmp_path / "task"
     _write_task(task_dir)
-    verifier = InfraSetVerifier(
+    verifier = AntriebVerifier(
         task=SimpleNamespace(paths=SimpleNamespace(task_dir=task_dir)),
         trial_paths=SimpleNamespace(),
         environment=SimpleNamespace(),
@@ -337,7 +337,7 @@ def test_verifier_accepts_compact_multi_node_evidence_labels(
 ) -> None:
     task_dir = tmp_path / "task"
     _write_task(task_dir)
-    verifier = InfraSetVerifier(
+    verifier = AntriebVerifier(
         task=SimpleNamespace(paths=SimpleNamespace(task_dir=task_dir)),
         trial_paths=SimpleNamespace(),
         environment=SimpleNamespace(),
@@ -387,7 +387,7 @@ def test_verifier_rejects_compact_labels_with_foreign_exec_nodes(
 ) -> None:
     task_dir = tmp_path / "task"
     _write_task(task_dir)
-    verifier = InfraSetVerifier(
+    verifier = AntriebVerifier(
         task=SimpleNamespace(paths=SimpleNamespace(task_dir=task_dir)),
         trial_paths=SimpleNamespace(),
         environment=SimpleNamespace(),
@@ -435,7 +435,7 @@ def test_verifier_turns_incomplete_mutation_cleanup_indeterminate(
 ) -> None:
     task_dir = tmp_path / "task"
     _write_task(task_dir)
-    verifier = InfraSetVerifier(
+    verifier = AntriebVerifier(
         task=SimpleNamespace(paths=SimpleNamespace(task_dir=task_dir)),
         trial_paths=SimpleNamespace(),
         environment=SimpleNamespace(),
@@ -484,7 +484,7 @@ def test_verifier_can_use_an_explicit_lower_coverage_threshold(
 ) -> None:
     task_dir = tmp_path / "task"
     _write_task(task_dir)
-    verifier = InfraSetVerifier(
+    verifier = AntriebVerifier(
         task=SimpleNamespace(paths=SimpleNamespace(task_dir=task_dir)),
         trial_paths=SimpleNamespace(),
         environment=SimpleNamespace(),

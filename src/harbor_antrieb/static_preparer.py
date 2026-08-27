@@ -11,8 +11,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
-from infraset.config import PrepareConfig
-from infraset.errors import ClusterExpiredError
+from harbor_antrieb.config import PrepareConfig
+from harbor_antrieb.errors import ClusterExpiredError
 
 
 class PrepareCommandConfig(BaseModel):
@@ -205,7 +205,7 @@ def _load_task_config(
     if not config_path.is_relative_to(task_root):
         raise ValueError("prepare configuration path must remain inside the task")
     if not config_path.is_file():
-        raise FileNotFoundError(f"InfraSet prepare config not found: {config_path}")
+        raise FileNotFoundError(f"Antrieb prepare config not found: {config_path}")
     return model.model_validate(tomllib.loads(config_path.read_text()))
 
 
@@ -240,7 +240,7 @@ def _raise_failed_setup(outcomes: list[_CommandOutcome]) -> None:
             f"({outcome.failure or 'failed'})"
             for outcome in failed
         )
-        raise RuntimeError(f"InfraSet static setup failed: {summary}")
+        raise RuntimeError(f"Antrieb static setup failed: {summary}")
 
 
 def _baseline_report(outcomes: list[_CommandOutcome]) -> dict[str, Any]:
@@ -342,7 +342,7 @@ async def capture_static_baseline(environment: Any, config: PrepareConfig) -> No
             f"{outcome.command.id} on {outcome.command.node}"
             for outcome in failed_required
         )
-        raise RuntimeError(f"InfraSet required baseline observations failed: {summary}")
+        raise RuntimeError(f"Antrieb required baseline observations failed: {summary}")
 
 
 async def run_static_prepare(environment: Any, config: PrepareConfig) -> None:

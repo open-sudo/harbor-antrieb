@@ -231,7 +231,7 @@ async def run_initializers(
     unknown = [name for name in names if name not in _INITIALIZERS]
     if unknown:
         raise ValueError(
-            f"Unknown InfraSet initializers {unknown}; "
+            f"Unknown Antrieb initializers {unknown}; "
             f"available: {sorted(_INITIALIZERS)}"
         )
     results: list[InitializationResult] = []

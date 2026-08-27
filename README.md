@@ -24,9 +24,9 @@ requires the Antrieb connection settings described below.
 Tasks select the provider through Harbor's standard import paths:
 
 ```text
-infraset.agent:InfraSetHostAgent
-infraset.environment:InfraSetEnvironment
-infraset.verifier:InfraSetVerifier
+harbor_antrieb.agent:AntriebHostAgent
+harbor_antrieb.environment:AntriebEnvironment
+harbor_antrieb.verifier:AntriebVerifier
 ```
 
 No Harbor source changes or Docker image are required.

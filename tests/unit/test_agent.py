@@ -7,9 +7,9 @@ import pytest
 
 from harbor.models.agent.context import AgentContext
 from harbor.environments.base import BaseEnvironment
-from infraset.agent import InfraSetHostAgent, _postmortem_audit_evidence
-from infraset.errors import ClusterExpiredError
-from infraset.runbooks import BaseRunbook
+from harbor_antrieb.agent import AntriebHostAgent, _postmortem_audit_evidence
+from harbor_antrieb.errors import ClusterExpiredError
+from harbor_antrieb.runbooks import BaseRunbook
 
 
 class FakeRetryEnvironment:
@@ -109,10 +109,10 @@ async def test_postmortem_failure_does_not_prevent_fresh_cluster_retry(
     async def failed_diagnostic(**kwargs: Any) -> tuple[dict[str, Any], str]:
         raise OSError(7, "Argument list too long")
 
-    monkeypatch.setattr("infraset.agent.run_structured_agent", fake_executor)
-    monkeypatch.setattr("infraset.agent.run_structured_log_agent", failed_diagnostic)
+    monkeypatch.setattr("harbor_antrieb.agent.run_structured_agent", fake_executor)
+    monkeypatch.setattr("harbor_antrieb.agent.run_structured_log_agent", failed_diagnostic)
     environment = FakeRetryEnvironment(max_clusters=2)
-    agent = InfraSetHostAgent(logs_dir=tmp_path, agent_name="codex")
+    agent = AntriebHostAgent(logs_dir=tmp_path, agent_name="codex")
 
     await agent.run(
         "Configure a database cluster",
@@ -140,7 +140,7 @@ def test_host_agent_reports_provider_from_model(
     model_name: str,
     expected_provider: str,
 ) -> None:
-    agent = InfraSetHostAgent(logs_dir=tmp_path, model_name=model_name)
+    agent = AntriebHostAgent(logs_dir=tmp_path, model_name=model_name)
 
     info = agent.to_agent_info()
 
@@ -168,7 +168,7 @@ async def test_host_agent_uses_managed_session_without_environment_exec(
             "raw-agent-output",
         )
 
-    monkeypatch.setattr("infraset.agent.run_structured_agent", fake_runner)
+    monkeypatch.setattr("harbor_antrieb.agent.run_structured_agent", fake_runner)
     environment = cast(
         BaseEnvironment,
         SimpleNamespace(
@@ -180,7 +180,7 @@ async def test_host_agent_uses_managed_session_without_environment_exec(
             ),
         ),
     )
-    agent = InfraSetHostAgent(
+    agent = AntriebHostAgent(
         logs_dir=tmp_path,
         model_name="claude-sonnet-4-6",
         reasoning_effort="medium",
@@ -226,7 +226,7 @@ async def test_host_agent_forwards_requested_service_tier(
             "raw-agent-output",
         )
 
-    monkeypatch.setattr("infraset.agent.run_structured_agent", fake_runner)
+    monkeypatch.setattr("harbor_antrieb.agent.run_structured_agent", fake_runner)
     environment = cast(
         BaseEnvironment,
         SimpleNamespace(
@@ -236,7 +236,7 @@ async def test_host_agent_forwards_requested_service_tier(
             base_runbooks=(),
         ),
     )
-    agent = InfraSetHostAgent(
+    agent = AntriebHostAgent(
         logs_dir=tmp_path,
         model_name="gpt-5.6-sol",
         agent_name="codex",
@@ -295,10 +295,10 @@ async def test_blocked_attempt_is_diagnosed_and_retried_on_fresh_cluster(
             "diagnostic output",
         )
 
-    monkeypatch.setattr("infraset.agent.run_structured_agent", fake_executor)
-    monkeypatch.setattr("infraset.agent.run_structured_log_agent", fake_diagnostic)
+    monkeypatch.setattr("harbor_antrieb.agent.run_structured_agent", fake_executor)
+    monkeypatch.setattr("harbor_antrieb.agent.run_structured_log_agent", fake_diagnostic)
     environment = FakeRetryEnvironment(max_clusters=2)
-    agent = InfraSetHostAgent(
+    agent = AntriebHostAgent(
         logs_dir=tmp_path,
         model_name="gpt-5.6-sol",
         agent_name="codex",
@@ -364,10 +364,10 @@ async def test_expired_cluster_is_diagnosed_from_logs_before_retry(
             "diagnostic output",
         )
 
-    monkeypatch.setattr("infraset.agent.run_structured_agent", fake_executor)
-    monkeypatch.setattr("infraset.agent.run_structured_log_agent", fake_diagnostic)
+    monkeypatch.setattr("harbor_antrieb.agent.run_structured_agent", fake_executor)
+    monkeypatch.setattr("harbor_antrieb.agent.run_structured_log_agent", fake_diagnostic)
     environment = FakeRetryEnvironment(max_clusters=2)
-    agent = InfraSetHostAgent(logs_dir=tmp_path, agent_name="codex")
+    agent = AntriebHostAgent(logs_dir=tmp_path, agent_name="codex")
 
     await agent.run(
         "Configure a database cluster",
@@ -408,10 +408,10 @@ async def test_cluster_quota_exhaustion_keeps_the_final_diagnosis(
             "diagnostic output",
         )
 
-    monkeypatch.setattr("infraset.agent.run_structured_agent", fake_executor)
-    monkeypatch.setattr("infraset.agent.run_structured_log_agent", fake_diagnostic)
+    monkeypatch.setattr("harbor_antrieb.agent.run_structured_agent", fake_executor)
+    monkeypatch.setattr("harbor_antrieb.agent.run_structured_log_agent", fake_diagnostic)
     environment = FakeRetryEnvironment(max_clusters=1)
-    agent = InfraSetHostAgent(logs_dir=tmp_path, agent_name="codex")
+    agent = AntriebHostAgent(logs_dir=tmp_path, agent_name="codex")
 
     with pytest.raises(RuntimeError, match="exhausted its managed-cluster quota"):
         await agent.run(

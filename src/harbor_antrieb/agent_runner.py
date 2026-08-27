@@ -15,8 +15,8 @@ from typing import Any
 from rewardkit.agents import get_agent
 from rewardkit.models import AgentJudge, MCPServerConfig
 
-from infraset.errors import ClusterExpiredError
-from infraset.exec_bridge import redact_text
+from harbor_antrieb.errors import ClusterExpiredError
+from harbor_antrieb.exec_bridge import redact_text
 
 
 def _modern_rewardkit_backend(backend: Any) -> bool:
@@ -58,7 +58,7 @@ def _build_backend_command(
             None,
         )
     if agent_name == "codex":
-        schema_path = workspace / ".infraset-output-schema.json"
+        schema_path = workspace / ".harbor_antrieb-output-schema.json"
         schema_path.write_text(json.dumps(schema))
         return (
             [
@@ -332,7 +332,7 @@ def configure_claude_mcp(
 ) -> Path:
     """Give Claude one invocation-scoped MCP server without user config changes."""
     fd, config_name = tempfile.mkstemp(
-        prefix="infraset-mcp-", suffix=".json", dir=workspace
+        prefix="harbor_antrieb-mcp-", suffix=".json", dir=workspace
     )
     config_path = Path(config_name)
     with os.fdopen(fd, "w") as config_file:
@@ -370,7 +370,7 @@ def configure_log_only_agent(
         return None
     if agent_name == "claude-code":
         fd, config_name = tempfile.mkstemp(
-            prefix="infraset-empty-mcp-", suffix=".json", dir=workspace
+            prefix="harbor_antrieb-empty-mcp-", suffix=".json", dir=workspace
         )
         config_path = Path(config_name)
         with os.fdopen(fd, "w") as config_file:
@@ -432,10 +432,10 @@ async def run_structured_agent(
     if max_exec_calls is not None and max_exec_calls < 1:
         raise ValueError("max_exec_calls must be positive")
     backend = get_agent(AgentJudge(agent=agent_name, model=model), str(workspace))
-    server_name = "infraset"
+    server_name = "harbor_antrieb"
     bridge_args = [
         "-m",
-        "infraset.exec_bridge",
+        "harbor_antrieb.exec_bridge",
         "--session-id",
         session_id,
         "--endpoint",
