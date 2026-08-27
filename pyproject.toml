@@ -1,0 +1,21 @@
+[project]
+name = "harbor-antrieb"
+version = "0.1.0"
+description = "Antrieb environment, agent, and verifier integration for Harbor."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.12"
+dependencies = [
+    "harbor>=0.22.0",
+    "harbor-rewardkit>=0.1.7",
+    "filelock>=3.29.0",
+    "httpx>=0.27.0",
+    "pydantic>=2.11.7",
+]
+
+[build-system]
+requires = ["uv_build>=0.10.8,<0.11.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "infraset"
