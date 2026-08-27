@@ -389,7 +389,7 @@ def configure_log_only_agent(
     raise ValueError(f"Unsupported host-side agent: {agent_name}")
 
 
-_HOST_SECRET_ENV_PREFIXES = ("INFRASET_INITIALIZE_",)
+_HOST_SECRET_ENV_PREFIXES = ("HARBOR_ANTRIEB_INITIALIZE_",)
 
 
 def agent_environment(source: dict[str, str] | None = None) -> dict[str, str]:

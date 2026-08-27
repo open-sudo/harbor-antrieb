@@ -845,12 +845,12 @@ def test_log_evaluator_does_not_inherit_cluster_authority(
 def test_agent_environment_removes_host_initialization_secrets(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("INFRASET_INITIALIZE_CREDENTIALS_FILE", "/run/secrets/init")
-    monkeypatch.setenv("INFRASET_INITIALIZE_CREDENTIALS", "must-not-leak")
+    monkeypatch.setenv("HARBOR_ANTRIEB_INITIALIZE_CREDENTIALS_FILE", "/run/secrets/init")
+    monkeypatch.setenv("HARBOR_ANTRIEB_INITIALIZE_CREDENTIALS", "must-not-leak")
     monkeypatch.setenv("MODEL_PROVIDER_TOKEN", "model-token")
 
     environment = agent_environment()
 
-    assert "INFRASET_INITIALIZE_CREDENTIALS_FILE" not in environment
-    assert "INFRASET_INITIALIZE_CREDENTIALS" not in environment
+    assert "HARBOR_ANTRIEB_INITIALIZE_CREDENTIALS_FILE" not in environment
+    assert "HARBOR_ANTRIEB_INITIALIZE_CREDENTIALS" not in environment
     assert environment["MODEL_PROVIDER_TOKEN"] == "model-token"

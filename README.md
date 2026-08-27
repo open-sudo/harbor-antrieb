@@ -16,12 +16,8 @@ export ANTRIEB_TOKEN='ant_...'
 
 Results are written to `~/infraset/jobs/<task-name>`.
 
-Optional runner variables include `INFRASET_MODEL`,
-`INFRASET_REASONING_EFFORT`, `INFRASET_SERVICE_TIER`, `INFRASET_AGENT_NAME`,
-`INFRASET_VERIFICATION_LEVEL`, `INFRASET_JOBS_DIR`, and `INFRASET_JOB_NAME`.
-Use `INFRASET_PROVIDER_REQUIREMENT` for an alternate provider source. Use
-`INFRASET_PROVIDER_DIR` for a local provider checkout and `HARBOR_DIR` for a
-local Harbor checkout.
+The task repository owns any runner-specific configuration. This provider only
+requires the Antrieb connection settings described below.
 
 ## Provider import paths
 
@@ -70,4 +66,4 @@ service and is not copied to managed nodes or included in task artifacts.
 
 Model authentication uses the selected Harbor agent's normal host-side login.
 RHEL subscription credentials, when required, use
-`INFRASET_INITIALIZE_CREDENTIALS_FILE` and are not stored in task files.
+`HARBOR_ANTRIEB_INITIALIZE_CREDENTIALS_FILE` and are not stored in task files.

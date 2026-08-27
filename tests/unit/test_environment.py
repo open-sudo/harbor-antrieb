@@ -242,7 +242,7 @@ async def test_initialize_registers_rhel_without_persisting_credentials(
     credentials.write_text("subscription-user\nsubscription-password\n")
     credentials.chmod(0o600)
     monkeypatch.setenv("ANTRIEB_TOKEN", "secret")
-    monkeypatch.setenv("INFRASET_INITIALIZE_CREDENTIALS_FILE", str(credentials))
+    monkeypatch.setenv("HARBOR_ANTRIEB_INITIALIZE_CREDENTIALS_FILE", str(credentials))
     monkeypatch.setattr("infraset.environment.AntriebClient", RhsmClient)
     environment = make_environment(
         tmp_path,
@@ -256,13 +256,13 @@ async def test_initialize_registers_rhel_without_persisting_credentials(
     rhsm_calls = [
         arguments
         for name, arguments in client.calls
-        if name == "exec" and "INFRASET_INITIALIZE_USERNAME" in arguments["command"]
+        if name == "exec" and "HARBOR_ANTRIEB_INITIALIZE_USERNAME" in arguments["command"]
     ]
     assert {call["node"] for call in rhsm_calls} == {"node1", "node2"}
     calls_by_node = {call["node"]: call for call in rhsm_calls}
     assert calls_by_node["node1"]["command"].startswith(
-        'sudo -n env INFRASET_INITIALIZE_USERNAME="$INFRASET_INITIALIZE_USERNAME" '
-        'INFRASET_INITIALIZE_PASSWORD="$INFRASET_INITIALIZE_PASSWORD" '
+        'sudo -n env HARBOR_ANTRIEB_INITIALIZE_USERNAME="$HARBOR_ANTRIEB_INITIALIZE_USERNAME" '
+        'HARBOR_ANTRIEB_INITIALIZE_PASSWORD="$HARBOR_ANTRIEB_INITIALIZE_PASSWORD" '
         "/bin/sh -c "
     )
     assert calls_by_node["node2"]["command"].startswith("set -eu\n")
@@ -280,8 +280,8 @@ async def test_initialize_registers_rhel_without_persisting_credentials(
     assert all(
         call["secret_env"]
         == {
-            "INFRASET_INITIALIZE_USERNAME": "subscription-user",
-            "INFRASET_INITIALIZE_PASSWORD": "subscription-password",
+            "HARBOR_ANTRIEB_INITIALIZE_USERNAME": "subscription-user",
+            "HARBOR_ANTRIEB_INITIALIZE_PASSWORD": "subscription-password",
         }
         for call in rhsm_calls
     )
@@ -323,7 +323,7 @@ async def test_failed_initialize_deletes_cluster_before_prepare(
             if name == "exec" and "subscription-manager" in arguments["command"]:
                 self.calls.append((name, arguments))
                 return {
-                    "stdout": ("INFRASET_INITIALIZE_STATUS=provider-unreachable\n"),
+                    "stdout": ("HARBOR_ANTRIEB_INITIALIZE_STATUS=provider-unreachable\n"),
                     "stderr": "",
                     "exit_code": 7,
                 }
@@ -339,7 +339,7 @@ async def test_failed_initialize_deletes_cluster_before_prepare(
         prepare_called = True
 
     monkeypatch.setenv("ANTRIEB_TOKEN", "secret")
-    monkeypatch.setenv("INFRASET_INITIALIZE_CREDENTIALS_FILE", str(credentials))
+    monkeypatch.setenv("HARBOR_ANTRIEB_INITIALIZE_CREDENTIALS_FILE", str(credentials))
     monkeypatch.setattr("infraset.environment.AntriebClient", FailedRhsmClient)
     environment = make_environment(
         tmp_path,
@@ -391,7 +391,7 @@ async def test_initializer_rejects_exposed_credentials_file(
     credentials.write_text("subscription-user\nsubscription-password\n")
     credentials.chmod(0o644)
     monkeypatch.setenv("ANTRIEB_TOKEN", "secret")
-    monkeypatch.setenv("INFRASET_INITIALIZE_CREDENTIALS_FILE", str(credentials))
+    monkeypatch.setenv("HARBOR_ANTRIEB_INITIALIZE_CREDENTIALS_FILE", str(credentials))
     monkeypatch.setattr("infraset.environment.AntriebClient", RhsmClient)
     environment = make_environment(
         tmp_path,

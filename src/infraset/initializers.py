@@ -28,13 +28,13 @@ class InitializationResult:
 
 Initializer = Callable[[Any], Awaitable[InitializationResult]]
 
-_INITIALIZE_CREDENTIALS_FILE_ENV = "INFRASET_INITIALIZE_CREDENTIALS_FILE"
-_RHSM_USERNAME_ENV = "INFRASET_INITIALIZE_USERNAME"
-_RHSM_PASSWORD_ENV = "INFRASET_INITIALIZE_PASSWORD"
+_INITIALIZE_CREDENTIALS_FILE_ENV = "HARBOR_ANTRIEB_INITIALIZE_CREDENTIALS_FILE"
+_RHSM_USERNAME_ENV = "HARBOR_ANTRIEB_INITIALIZE_USERNAME"
+_RHSM_PASSWORD_ENV = "HARBOR_ANTRIEB_INITIALIZE_PASSWORD"
 _RHSM_INITIALIZE_COMMAND = """\
 set -eu
 report_status() {
-  printf '%s\n' "INFRASET_INITIALIZE_STATUS=$1"
+  printf '%s\n' "HARBOR_ANTRIEB_INITIALIZE_STATUS=$1"
 }
 if ! command -v subscription-manager >/dev/null 2>&1; then
   report_status subscription-manager-missing
@@ -65,12 +65,12 @@ subscription-manager clean >/dev/null 2>&1 || true
 install -d -m 0750 /var/lib/rhsm/cache
 set +e
 timeout 120 subscription-manager register \
-  --username "$INFRASET_INITIALIZE_USERNAME" \
-  --password "$INFRASET_INITIALIZE_PASSWORD" \
+  --username "$HARBOR_ANTRIEB_INITIALIZE_USERNAME" \
+  --password "$HARBOR_ANTRIEB_INITIALIZE_PASSWORD" \
   --force >/dev/null 2>&1
 register_rc=$?
 set -e
-unset INFRASET_INITIALIZE_USERNAME INFRASET_INITIALIZE_PASSWORD
+unset HARBOR_ANTRIEB_INITIALIZE_USERNAME HARBOR_ANTRIEB_INITIALIZE_PASSWORD
 
 if ! subscription-manager identity >/dev/null 2>&1; then
   if [ "$register_rc" -eq 0 ]; then
@@ -89,12 +89,12 @@ def _load_initialize_credentials() -> str:
     configured_path = os.environ.get(_INITIALIZE_CREDENTIALS_FILE_ENV)
     if not configured_path:
         raise RuntimeError(
-            "initialization requires INFRASET_INITIALIZE_CREDENTIALS_FILE"
+            "initialization requires HARBOR_ANTRIEB_INITIALIZE_CREDENTIALS_FILE"
         )
     path = Path(configured_path)
     if not path.is_absolute():
         raise RuntimeError(
-            "INFRASET_INITIALIZE_CREDENTIALS_FILE must be an absolute path"
+            "HARBOR_ANTRIEB_INITIALIZE_CREDENTIALS_FILE must be an absolute path"
         )
     try:
         metadata = path.stat()
@@ -194,9 +194,9 @@ async def _initialize_rhsm(environment: Any) -> InitializationResult:
         )
         status = next(
             (
-                line.removeprefix("INFRASET_INITIALIZE_STATUS=")
+                line.removeprefix("HARBOR_ANTRIEB_INITIALIZE_STATUS=")
                 for line in reversed((result.stdout or "").splitlines())
-                if line.startswith("INFRASET_INITIALIZE_STATUS=")
+                if line.startswith("HARBOR_ANTRIEB_INITIALIZE_STATUS=")
             ),
             f"exit-{result.return_code}",
         )
