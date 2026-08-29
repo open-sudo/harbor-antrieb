@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, override
 
 from harbor.agents.base import BaseAgent
+from harbor.agents.capabilities import AgentCapabilities
 from harbor.agents.model_connection import ModelConnectionSpec
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
@@ -218,6 +219,7 @@ def _postmortem_audit_evidence(
 class AntriebHostAgent(BaseAgent):
     """Host-side executor for an Antrieb managed cluster."""
 
+    capabilities = AgentCapabilities(host_managed_logs=True)
     MODEL_CONNECTION = ModelConnectionSpec()
 
     def __init__(

@@ -31,6 +31,10 @@ class FakeRetryEnvironment:
         self.remote_session_id = f"managed-session-{self.clusters_provisioned}"
 
 
+def test_host_agent_manages_logs_in_the_host_trial_directory() -> None:
+    assert AntriebHostAgent.capabilities.host_managed_logs is True
+
+
 def test_postmortem_audit_is_compact_and_prioritizes_failures(tmp_path: Path) -> None:
     audit_path = tmp_path / "executor-commands.jsonl"
     records: list[dict[str, Any]] = []
@@ -110,7 +114,9 @@ async def test_postmortem_failure_does_not_prevent_fresh_cluster_retry(
         raise OSError(7, "Argument list too long")
 
     monkeypatch.setattr("harbor_antrieb.agent.run_structured_agent", fake_executor)
-    monkeypatch.setattr("harbor_antrieb.agent.run_structured_log_agent", failed_diagnostic)
+    monkeypatch.setattr(
+        "harbor_antrieb.agent.run_structured_log_agent", failed_diagnostic
+    )
     environment = FakeRetryEnvironment(max_clusters=2)
     agent = AntriebHostAgent(logs_dir=tmp_path, agent_name="codex")
 
@@ -296,7 +302,9 @@ async def test_blocked_attempt_is_diagnosed_and_retried_on_fresh_cluster(
         )
 
     monkeypatch.setattr("harbor_antrieb.agent.run_structured_agent", fake_executor)
-    monkeypatch.setattr("harbor_antrieb.agent.run_structured_log_agent", fake_diagnostic)
+    monkeypatch.setattr(
+        "harbor_antrieb.agent.run_structured_log_agent", fake_diagnostic
+    )
     environment = FakeRetryEnvironment(max_clusters=2)
     agent = AntriebHostAgent(
         logs_dir=tmp_path,
@@ -365,7 +373,9 @@ async def test_expired_cluster_is_diagnosed_from_logs_before_retry(
         )
 
     monkeypatch.setattr("harbor_antrieb.agent.run_structured_agent", fake_executor)
-    monkeypatch.setattr("harbor_antrieb.agent.run_structured_log_agent", fake_diagnostic)
+    monkeypatch.setattr(
+        "harbor_antrieb.agent.run_structured_log_agent", fake_diagnostic
+    )
     environment = FakeRetryEnvironment(max_clusters=2)
     agent = AntriebHostAgent(logs_dir=tmp_path, agent_name="codex")
 
@@ -409,7 +419,9 @@ async def test_cluster_quota_exhaustion_keeps_the_final_diagnosis(
         )
 
     monkeypatch.setattr("harbor_antrieb.agent.run_structured_agent", fake_executor)
-    monkeypatch.setattr("harbor_antrieb.agent.run_structured_log_agent", fake_diagnostic)
+    monkeypatch.setattr(
+        "harbor_antrieb.agent.run_structured_log_agent", fake_diagnostic
+    )
     environment = FakeRetryEnvironment(max_clusters=1)
     agent = AntriebHostAgent(logs_dir=tmp_path, agent_name="codex")
 

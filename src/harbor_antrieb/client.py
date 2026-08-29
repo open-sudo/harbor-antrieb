@@ -16,6 +16,28 @@ class AntriebMCPError(RuntimeError):
         self.payload = payload
 
 
+def _provider_error_message(error: Any) -> str:
+    """Extract the useful provider message without dumping its protocol payload."""
+    if isinstance(error, str):
+        return error.strip() or "Antrieb rejected the request"
+    if isinstance(error, dict):
+        message = error.get("message")
+        if isinstance(message, str) and message.strip():
+            return message.strip()
+        for key in ("detail", "details", "reason", "error"):
+            nested = error.get(key)
+            if nested is not None:
+                extracted = _provider_error_message(nested)
+                if extracted:
+                    return extracted
+    if isinstance(error, (list, tuple)):
+        messages = [_provider_error_message(item) for item in error]
+        messages = [message for message in messages if message]
+        if messages:
+            return "; ".join(messages)
+    return "Antrieb rejected the request"
+
+
 class AntriebClient:
     """Minimal streamable-HTTP client for the existing Antrieb MCP API."""
 
@@ -60,7 +82,13 @@ class AntriebClient:
                 raise ClusterExpiredError(
                     "The Antrieb managed cluster lease expired"
                 ) from exc
-            raise
+            payload = {
+                "http_status": response.status_code,
+                "error": error_payload,
+            }
+            raise AntriebMCPError(
+                _provider_error_message(error_payload), payload
+            ) from None
         self._mcp_session_id = response.headers.get(
             "Mcp-Session-Id", self._mcp_session_id
         )
@@ -69,8 +97,8 @@ class AntriebClient:
             if is_cluster_expired(payload["error"]):
                 raise ClusterExpiredError("The Antrieb managed cluster lease expired")
             raise AntriebMCPError(
-                f"Antrieb MCP error: {payload['error']}", payload
-            )
+                _provider_error_message(payload["error"]), payload
+            ) from None
         result = payload.get("result")
         if not isinstance(result, dict):
             raise RuntimeError("Antrieb MCP returned a malformed result")

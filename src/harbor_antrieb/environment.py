@@ -28,7 +28,7 @@ class AntriebEnvironment(BaseEnvironment):
     """A Harbor environment backed by one provider-managed Antrieb cluster."""
 
     _TRANSFER_CHUNK_SIZE = 48 * 1024
-    _REMOTE_EXEC_DIR = "/run/harbor_antrieb/exec"
+    _REMOTE_EXEC_DIR = "/tmp"
     _EXEC_DONE_PREFIX = "__INFRASET_DONE__:"
     _EXEC_RUNNING = "__INFRASET_RUNNING__"
 
@@ -45,9 +45,7 @@ class AntriebEnvironment(BaseEnvironment):
         environment_dir = Path(kwargs.get("environment_dir", args[0] if args else ""))
         definition_path = environment_dir / "harbor_antrieb.toml"
         self.definition = (
-            AntriebDefinition.model_validate(
-                tomllib.loads(definition_path.read_text())
-            )
+            AntriebDefinition.model_validate(tomllib.loads(definition_path.read_text()))
             if definition_path.is_file()
             else None
         )
@@ -393,7 +391,8 @@ class AntriebEnvironment(BaseEnvironment):
     ) -> ExecResult:
         """Run a Harbor command without holding one Antrieb HTTP request open."""
         execution_id = uuid.uuid4().hex
-        prefix = f"{self._REMOTE_EXEC_DIR}/{execution_id}"
+        execution_dir = f"{self._REMOTE_EXEC_DIR}/.harbor-antrieb-{execution_id}"
+        prefix = f"{execution_dir}/result"
         stdout_path = f"{prefix}.stdout"
         stderr_path = f"{prefix}.stderr"
         status_path = f"{prefix}.status"
@@ -418,7 +417,8 @@ class AntriebEnvironment(BaseEnvironment):
             f"</dev/null & printf '%s\\n' \"$!\" > {shlex.quote(pid_path)}"
         )
         launch_command = (
-            f"mkdir -p {shlex.quote(self._REMOTE_EXEC_DIR)} && umask 077 && "
+            f"umask 077 && mkdir -p {shlex.quote(self._REMOTE_EXEC_DIR)} && "
+            f"mkdir -m 700 {shlex.quote(execution_dir)} && "
             f": > {shlex.quote(stdout_path)} && "
             f": > {shlex.quote(stderr_path)} && "
             f"rm -f {shlex.quote(status_path)} {shlex.quote(status_tmp_path)} "
@@ -426,6 +426,16 @@ class AntriebEnvironment(BaseEnvironment):
         )
         launch_result = await self._exec_on_node_raw(node, launch_command)
         if launch_result.return_code != 0:
+            try:
+                await self._exec_on_node_raw(
+                    node,
+                    f"rm -f {shlex.quote(stdout_path)} {shlex.quote(stderr_path)} "
+                    f"{shlex.quote(status_path)} {shlex.quote(status_tmp_path)} "
+                    f"{shlex.quote(pid_path)}; "
+                    f"rmdir {shlex.quote(execution_dir)} 2>/dev/null || true",
+                )
+            except BaseException:
+                pass
             await self._emit_output(launch_result)
             return launch_result
 
@@ -437,7 +447,8 @@ class AntriebEnvironment(BaseEnvironment):
             f"cat {shlex.quote(stdout_path)}; "
             f"cat {shlex.quote(stderr_path)} >&2; "
             f"rm -f {shlex.quote(stdout_path)} {shlex.quote(stderr_path)} "
-            f"{shlex.quote(status_path)} {shlex.quote(pid_path)}; exit 0; fi; "
+            f"{shlex.quote(status_path)} {shlex.quote(pid_path)}; "
+            f"rmdir {shlex.quote(execution_dir)} 2>/dev/null || true; exit 0; fi; "
             "harbor_i=$((harbor_i + 1)); sleep 0.5; done; "
             f"printf %s {shlex.quote(self._EXEC_RUNNING)}"
         )
@@ -476,7 +487,8 @@ class AntriebEnvironment(BaseEnvironment):
                 f"kill -- -$(cat {shlex.quote(pid_path)}) 2>/dev/null || true; fi; "
                 f"rm -f {shlex.quote(stdout_path)} {shlex.quote(stderr_path)} "
                 f"{shlex.quote(status_path)} {shlex.quote(status_tmp_path)} "
-                f"{shlex.quote(pid_path)}"
+                f"{shlex.quote(pid_path)}; "
+                f"rmdir {shlex.quote(execution_dir)} 2>/dev/null || true"
             )
             try:
                 await asyncio.shield(self._exec_on_node_raw(node, abort_command))
@@ -509,7 +521,17 @@ class AntriebEnvironment(BaseEnvironment):
                 f"{key}={shlex.quote(value)}" for key, value in merged_env.items()
             )
             wrapped = f"env {assignments} {wrapped}"
-        if effective_user not in (None, "root", 0, "0"):
+        if effective_user in ("root", 0, "0"):
+            wrapped = (
+                'if [ "$(id -u)" -eq 0 ]; then '
+                f"{wrapped}; "
+                "elif command -v sudo >/dev/null 2>&1; then "
+                f"sudo -n -- {wrapped}; "
+                "else printf '%s\\n' "
+                "'Harbor requested root execution, but sudo is unavailable' >&2; "
+                "exit 126; fi"
+            )
+        elif effective_user is not None:
             wrapped = (
                 f"su -s /bin/bash {shlex.quote(str(effective_user))} -c "
                 f"{shlex.quote(wrapped)}"

@@ -256,7 +256,8 @@ async def test_initialize_registers_rhel_without_persisting_credentials(
     rhsm_calls = [
         arguments
         for name, arguments in client.calls
-        if name == "exec" and "HARBOR_ANTRIEB_INITIALIZE_USERNAME" in arguments["command"]
+        if name == "exec"
+        and "HARBOR_ANTRIEB_INITIALIZE_USERNAME" in arguments["command"]
     ]
     assert {call["node"] for call in rhsm_calls} == {"node1", "node2"}
     calls_by_node = {call["node"]: call for call in rhsm_calls}
@@ -323,7 +324,9 @@ async def test_failed_initialize_deletes_cluster_before_prepare(
             if name == "exec" and "subscription-manager" in arguments["command"]:
                 self.calls.append((name, arguments))
                 return {
-                    "stdout": ("HARBOR_ANTRIEB_INITIALIZE_STATUS=provider-unreachable\n"),
+                    "stdout": (
+                        "HARBOR_ANTRIEB_INITIALIZE_STATUS=provider-unreachable\n"
+                    ),
                     "stderr": "",
                     "exit_code": 7,
                 }
@@ -431,7 +434,9 @@ async def test_malformed_base_runbook_aborts_before_provision(
             return await super().call_tool(name, arguments)
 
     monkeypatch.setenv("ANTRIEB_TOKEN", "secret")
-    monkeypatch.setattr("harbor_antrieb.environment.AntriebClient", MalformedRunbookClient)
+    monkeypatch.setattr(
+        "harbor_antrieb.environment.AntriebClient", MalformedRunbookClient
+    )
     environment = make_environment(tmp_path)
 
     with pytest.raises(RuntimeError, match="malformed base runbook"):
@@ -704,7 +709,10 @@ async def test_exec_uses_bash_for_harbor_pipefail(
         "env HOME=/root USER=root LOGNAME=root EXAMPLE=value bash -lc"
         in launch["command"]
     )
+    assert "command -v sudo" in launch["command"]
+    assert "sudo -n -- env HOME=/root" in launch["command"]
     assert "cd /tmp && set -o pipefail; true" in launch["command"]
+    assert "/run/harbor_antrieb" not in launch["command"]
 
 
 @pytest.mark.asyncio
@@ -803,3 +811,4 @@ async def test_detached_exec_protocol_with_local_shell(tmp_path: Path) -> None:
     assert result.stdout == "hello from stdout\n"
     assert result.stderr is not None
     assert "hello from stderr\n" in result.stderr
+    assert list((tmp_path / "detached-exec").iterdir()) == []

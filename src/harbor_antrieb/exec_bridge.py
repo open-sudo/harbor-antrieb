@@ -156,9 +156,10 @@ def _argument_parser() -> argparse.ArgumentParser:
 
 
 def _load_descriptor(path: Path | None) -> dict[str, Any]:
-    descriptor_path = path or Path("/run/harbor_antrieb/session.json")
+    if path is None:
+        return {}
     try:
-        loaded = json.loads(descriptor_path.read_text())
+        loaded = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError):
         return {}
     return loaded if isinstance(loaded, dict) else {}
