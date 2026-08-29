@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, override
@@ -713,6 +714,13 @@ async def test_exec_uses_bash_for_harbor_pipefail(
     assert "sudo -n -- env HOME=/root" in launch["command"]
     assert "cd /tmp && set -o pipefail; true" in launch["command"]
     assert "/run/harbor_antrieb" not in launch["command"]
+    syntax = subprocess.run(
+        ["bash", "-n", "-c", launch["command"]],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert syntax.returncode == 0, syntax.stderr
 
 
 @pytest.mark.asyncio

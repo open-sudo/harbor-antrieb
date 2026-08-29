@@ -403,7 +403,7 @@ class AntriebEnvironment(BaseEnvironment):
         if timeout_sec is not None:
             executed_command = (
                 f"timeout --signal=TERM --kill-after=5s {max(1, timeout_sec)}s "
-                f"{command}"
+                f"bash -c {shlex.quote(command)}"
             )
         runner = (
             f"{executed_command}\n"
