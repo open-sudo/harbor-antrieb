@@ -8,9 +8,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from rewardkit.models import MCPServerConfig
 
 from harbor_antrieb.agent_runner import (
     _communicate_with_cluster_guard,
+    _parse_structured_output,
+    _raise_if_service_tier_omitted,
     agent_environment,
     append_audit_argument,
     append_reasoning_effort,
@@ -23,11 +26,28 @@ from harbor_antrieb.agent_runner import (
 )
 from harbor_antrieb.errors import ClusterExpiredError
 from harbor_antrieb.exec_bridge import ExecBridge
-from rewardkit.models import MCPServerConfig
+from harbor_antrieb.shell import preferred_shell_command
 
 
 def _bridge_command(*args: str) -> list[str]:
     return [sys.executable, "-m", "harbor_antrieb.exec_bridge", *args]
+
+
+def test_structured_output_parser_keeps_complete_report_with_nested_evidence() -> None:
+    report = {
+        "status": "completed",
+        "summary": "Service is healthy.",
+        "actions_performed": ["Configured the service."],
+        "evidence": [
+            {
+                "requirement": "The service responds.",
+                "command_ids": ["cmd-123"],
+                "summary": "The request returned HTTP 200.",
+            }
+        ],
+    }
+
+    assert _parse_structured_output(object(), json.dumps(report), None) == report
 
 
 def test_python_bridge_exposes_only_exec() -> None:
@@ -146,14 +166,16 @@ async def test_bridge_binds_exec_to_managed_session_and_node(tmp_path: Path) -> 
             {
                 "session_id": "managed-session",
                 "node": "node1",
-                "command": "uname -a",
+                "command": preferred_shell_command("uname -a"),
             },
         )
     ]
-    outcomes = [
-        json.loads(line)["outcome"] for line in audit_path.read_text().splitlines()
-    ]
+    audit = [json.loads(line) for line in audit_path.read_text().splitlines()]
+    outcomes = [record["outcome"] for record in audit]
     assert outcomes == ["requested", "completed"]
+    assert audit[0]["command_id"] == audit[1]["command_id"]
+    assert audit[0]["command_id"].startswith("cmd-")
+    assert audit[0]["command_id"] in response["result"]["content"][1]["text"]
 
 
 @pytest.mark.asyncio
@@ -770,6 +792,16 @@ def test_codex_host_agent_uses_requested_service_tier() -> None:
 def test_service_tier_rejects_unsupported_backend() -> None:
     with pytest.raises(ValueError, match="only by Codex"):
         append_service_tier("claude-code", [], "fast")
+
+
+def test_omitted_service_tier_is_a_hard_error() -> None:
+    stderr = (
+        "warning: Configured service tier `ultrafast` is not advertised as "
+        "supported for model `gpt-5.6-sol` and will be omitted from requests."
+    )
+
+    with pytest.raises(RuntimeError, match="omitted requested service tier"):
+        _raise_if_service_tier_omitted(stderr, "ultrafast")
 
 
 def test_codex_uses_invocation_scoped_mcp_config() -> None:

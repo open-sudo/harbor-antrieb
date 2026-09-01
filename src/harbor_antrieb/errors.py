@@ -3,6 +3,9 @@ from __future__ import annotations
 from typing import Any
 
 
+PROVIDER_ENV_ERROR_MARKER = "HARBOR_ANTRIEB_PROVIDER_ENV_MISSING"
+
+
 class ClusterExpiredError(RuntimeError):
     """The provider-managed cluster lease has expired."""
 

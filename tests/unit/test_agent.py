@@ -4,9 +4,9 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
-
-from harbor.models.agent.context import AgentContext
 from harbor.environments.base import BaseEnvironment
+from harbor.models.agent.context import AgentContext
+
 from harbor_antrieb.agent import AntriebHostAgent, _postmortem_audit_evidence
 from harbor_antrieb.errors import ClusterExpiredError
 from harbor_antrieb.runbooks import BaseRunbook
@@ -118,6 +118,20 @@ async def test_postmortem_failure_does_not_prevent_fresh_cluster_retry(
         "harbor_antrieb.agent.run_structured_log_agent", failed_diagnostic
     )
     environment = FakeRetryEnvironment(max_clusters=2)
+    collected_outcomes: list[str] = []
+
+    class CollectorSpy:
+        async def finish_executor(
+            self,
+            _: Any,
+            *,
+            outcome: str,
+            error: BaseException | None = None,
+        ) -> None:
+            del error
+            collected_outcomes.append(outcome)
+
+    environment.collector = CollectorSpy()
     agent = AntriebHostAgent(logs_dir=tmp_path, agent_name="codex")
 
     await agent.run(
@@ -127,6 +141,7 @@ async def test_postmortem_failure_does_not_prevent_fresh_cluster_retry(
     )
 
     assert environment.recreate_calls == 1
+    assert collected_outcomes == ["cluster_expired", "completed"]
     history = json.loads((tmp_path / "attempt-history.json").read_text())
     assert history["attempts"][0]["outcome"] == "cluster_expired"
     assert "Argument list too long" in history["attempts"][0]["diagnostic_error"]
@@ -203,6 +218,19 @@ async def test_host_agent_uses_managed_session_without_environment_exec(
     assert runner_kwargs["service_tier"] is None
     assert "node1, node2, node3" in runner_kwargs["prompt"]
     assert "Do not install the agent" in runner_kwargs["prompt"]
+    assert 'target "$NODE_IP" by default' in runner_kwargs["prompt"]
+    assert "Do not assume localhost" in runner_kwargs["prompt"]
+    assert "Harbor-Antrieb evidence command" in runner_kwargs["prompt"]
+    assert "smallest safe, reversible" in runner_kwargs["prompt"]
+    assert "healthy baseline, active" in runner_kwargs["prompt"]
+    assert "Configuration, topology, restart policy" in runner_kwargs["prompt"]
+    assert "evidence" in runner_kwargs["schema"]["required"]
+    assert runner_kwargs["schema"]["properties"]["evidence"]["minItems"] == 1
+    assert (
+        runner_kwargs["schema"]["properties"]["evidence"]["items"]["properties"]
+        ["command_ids"]["minItems"]
+        == 1
+    )
     assert "Antrieb commands use POSIX sh." in runner_kwargs["prompt"]
     assert (tmp_path / "agent-raw-output.txt").read_text() == "raw-agent-output"
     assert context.metadata is not None

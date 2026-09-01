@@ -23,9 +23,17 @@ def platform_references(environment: Any) -> tuple[BaseRunbook, ...]:
     return references
 
 
-def render_platform_references(environment: Any) -> str:
+def render_platform_references(
+    environment: Any,
+    *,
+    exclude: frozenset[str] = frozenset(),
+) -> str:
     """Render transient base runbooks for an agent prompt without persisting them."""
-    references = platform_references(environment)
+    references = tuple(
+        reference
+        for reference in platform_references(environment)
+        if reference.fq_name not in exclude
+    )
     if not references:
         return "(No platform references were declared.)"
     return "\n\n".join(

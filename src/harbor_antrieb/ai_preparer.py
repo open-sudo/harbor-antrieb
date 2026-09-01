@@ -43,6 +43,9 @@ benchmark. Work only through the Antrieb exec tool and address managed nodes
 directly. Create the starting state described below, including intentional legacy or
 partially configured state. Do not complete the executor's task. Do not provision,
 replace, save, or delete the cluster. Finish with a concise structured report.
+Every exec call pre-exports NODE_NAME and NODE_IP. Target services on the managed
+node through "$NODE_IP" by default; use localhost or 127.0.0.1 only when loopback is
+part of the required starting state or a live listener check confirms it.
 
 Managed nodes: {", ".join(environment.nodes)}
 

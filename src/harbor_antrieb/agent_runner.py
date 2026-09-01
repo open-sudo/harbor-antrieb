@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
+import time
 from collections.abc import Callable
 from contextlib import suppress
 from datetime import UTC, datetime
@@ -17,6 +19,28 @@ from rewardkit.models import AgentJudge, MCPServerConfig
 
 from harbor_antrieb.errors import ClusterExpiredError
 from harbor_antrieb.exec_bridge import redact_text
+
+_OMITTED_SERVICE_TIER = re.compile(
+    r"Configured service tier `(?P<tier>[^`]+)` .* will be omitted from requests",
+    re.IGNORECASE,
+)
+
+
+def _raise_if_service_tier_omitted(
+    stderr: str, requested_tier: str | None
+) -> None:
+    """Do not silently run at a different service tier than requested."""
+    if requested_tier is None:
+        return
+    match = _OMITTED_SERVICE_TIER.search(stderr)
+    if match is None:
+        return
+    tier = match.group("tier")
+    raise RuntimeError(
+        f"Codex omitted requested service tier {tier!r} "
+        f"(configured as {requested_tier!r}); choose a tier advertised "
+        "for the selected model and account"
+    )
 
 
 def _modern_rewardkit_backend(backend: Any) -> bool:
@@ -283,15 +307,21 @@ def _parse_structured_output(
     )
     decoder = json.JSONDecoder()
     candidates: list[dict[str, Any]] = []
-    for index, character in enumerate(parsed_output):
-        if character != "{":
-            continue
+    index = 0
+    while index < len(parsed_output):
+        start = parsed_output.find("{", index)
+        if start < 0:
+            break
         try:
-            value, _ = decoder.raw_decode(parsed_output, index)
+            value, end = decoder.raw_decode(parsed_output, start)
         except json.JSONDecodeError:
+            index = start + 1
             continue
         if isinstance(value, dict):
             candidates.append(value)
+        # A decoded object's nested dictionaries are part of that candidate,
+        # not later top-level reports. Resume only after the complete value.
+        index = max(end, start + 1)
 
     validation_error: Exception | None = None
     for candidate in reversed(candidates):
@@ -427,11 +457,22 @@ async def run_structured_agent(
     allow_offline_finalization: bool = False,
     output_validator: Callable[[dict[str, Any]], None] | None = None,
     max_exec_calls: int | None = None,
+    telemetry_path: Path | None = None,
+    telemetry_context: dict[str, str] | None = None,
 ) -> tuple[dict[str, Any], str]:
     """Run a host-side agent with access only to managed-cluster exec."""
     if max_exec_calls is not None and max_exec_calls < 1:
         raise ValueError("max_exec_calls must be positive")
     backend = get_agent(AgentJudge(agent=agent_name, model=model), str(workspace))
+    request_started = datetime.now(UTC)
+    request_started_clock = time.perf_counter()
+    process_started: datetime | None = None
+    response_received: datetime | None = None
+    scoped_prompt = ""
+    raw_stdout = ""
+    outcome = "error"
+    error_type: str | None = None
+    telemetry_heartbeat_task: asyncio.Task[None] | None = None
     server_name = "harbor_antrieb"
     bridge_args = [
         "-m",
@@ -523,6 +564,32 @@ async def run_structured_agent(
             cwd=workspace,
             env=agent_environment(getattr(backend, "env", None)),
         )
+        process_started = datetime.now(UTC)
+        if telemetry_path is not None:
+            _append_llm_telemetry(
+                telemetry_path,
+                {
+                    **(telemetry_context or {}),
+                    "event": "started",
+                    "recorded_at": process_started.isoformat(),
+                    "agent": agent_name,
+                    "model": model,
+                    "request_started_at": request_started.isoformat(),
+                    "process_started_at": process_started.isoformat(),
+                    "prompt_chars": len(scoped_prompt),
+                    "prompt_tokens_estimate": (len(scoped_prompt) + 3) // 4,
+                },
+            )
+            telemetry_heartbeat_task = asyncio.create_task(
+                _stream_llm_telemetry(
+                    telemetry_path,
+                    telemetry_context or {},
+                    agent_name,
+                    model,
+                    process_started,
+                    time.perf_counter(),
+                )
+            )
         try:
             stdout, stderr, expiration_message = await _communicate_with_cluster_guard(
                 process,
@@ -542,9 +609,38 @@ async def run_structured_agent(
                 getattr(exc, "infraset_stderr", b""),
             )
             raise
+        response_received = datetime.now(UTC)
         raw_stdout, raw_stderr = _write_process_logs(
             workspace, agent_name, stdout, stderr
         )
+        _raise_if_service_tier_omitted(raw_stderr, service_tier)
+        if telemetry_path is not None:
+            _append_llm_telemetry(
+                telemetry_path,
+                {
+                    **(telemetry_context or {}),
+                    "event": "response_received",
+                    "recorded_at": response_received.isoformat(),
+                    "agent": agent_name,
+                    "model": model,
+                    "process_started_at": process_started.isoformat()
+                    if process_started
+                    else None,
+                    "response_received_at": response_received.isoformat(),
+                    "model_process_time_ms": (
+                        round(
+                            (response_received - process_started).total_seconds()
+                            * 1000,
+                            1,
+                        )
+                        if process_started
+                        else None
+                    ),
+                    "output_chars": len(raw_stdout),
+                    "output_tokens_estimate": (len(raw_stdout) + 3) // 4,
+                    "process_returncode": process.returncode,
+                },
+            )
         parse_stdout = raw_stdout
         if structured_output_path is not None and structured_output_path.is_file():
             parse_stdout = structured_output_path.read_text()
@@ -613,12 +709,87 @@ async def run_structured_agent(
             if parse_error is not None:
                 raise parse_error
             raise RuntimeError("Evaluation agent returned no structured output")
+        outcome = "success"
         return parsed, raw_stdout
+    except Exception as exc:
+        error_type = type(exc).__name__
+        raise
     finally:
+        if telemetry_path is not None:
+            if telemetry_heartbeat_task is not None:
+                telemetry_heartbeat_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await telemetry_heartbeat_task
+            _append_llm_telemetry(
+                telemetry_path,
+                {
+                    **(telemetry_context or {}),
+                    "event": "finished",
+                    "recorded_at": datetime.now(UTC).isoformat(),
+                    "agent": agent_name,
+                    "model": model,
+                    "request_started_at": request_started.isoformat(),
+                    "process_started_at": (
+                        process_started.isoformat() if process_started else None
+                    ),
+                    "response_received_at": (
+                        response_received.isoformat() if response_received else None
+                    ),
+                    "wall_time_ms": round(
+                        (time.perf_counter() - request_started_clock) * 1000, 1
+                    ),
+                    "model_process_time_ms": (
+                        round(
+                            (response_received - process_started).total_seconds() * 1000,
+                            1,
+                        )
+                        if process_started and response_received
+                        else None
+                    ),
+                    "prompt_chars": len(scoped_prompt),
+                    "prompt_tokens_estimate": (len(scoped_prompt) + 3) // 4,
+                    "output_chars": len(raw_stdout),
+                    "output_tokens_estimate": (len(raw_stdout) + 3) // 4,
+                    "outcome": outcome,
+                    "error_type": error_type,
+                },
+            )
         await _stop_backend(backend)
         if agent_mcp_config is not None:
             agent_mcp_config.unlink(missing_ok=True)
         fatal_path.unlink(missing_ok=True)
+
+
+def _append_llm_telemetry(path: Path, record: dict[str, Any]) -> None:
+    """Append prompt and latency metadata without storing prompt contents."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a") as stream:
+        stream.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+async def _stream_llm_telemetry(
+    path: Path,
+    context: dict[str, str],
+    agent: str,
+    model: str | None,
+    started_at: datetime,
+    started_clock: float,
+) -> None:
+    """Write live model-session heartbeats until the task is cancelled."""
+    while True:
+        await asyncio.sleep(5)
+        _append_llm_telemetry(
+            path,
+            {
+                **context,
+                "event": "heartbeat",
+                "recorded_at": datetime.now(UTC).isoformat(),
+                "agent": agent,
+                "model": model,
+                "process_started_at": started_at.isoformat(),
+                "elapsed_ms": round((time.perf_counter() - started_clock) * 1000, 1),
+            },
+        )
 
 
 async def run_structured_log_agent(
@@ -630,10 +801,21 @@ async def run_structured_log_agent(
     workspace: Path,
     timeout_sec: int,
     reasoning_effort: str | None = None,
+    service_tier: str | None = None,
+    telemetry_path: Path | None = None,
+    telemetry_context: dict[str, str] | None = None,
 ) -> tuple[dict[str, Any], str]:
     """Run a structured diagnostic agent with no managed-cluster MCP access."""
     backend = get_agent(AgentJudge(agent=agent_name, model=model), str(workspace))
     isolation_config: Path | None = None
+    request_started = datetime.now(UTC)
+    request_started_clock = time.perf_counter()
+    process_started: datetime | None = None
+    response_received: datetime | None = None
+    raw_stdout = ""
+    outcome = "error"
+    error_type: str | None = None
+    telemetry_heartbeat_task: asyncio.Task[None] | None = None
     workspace.mkdir(parents=True, exist_ok=True)
     try:
         await _start_backend(backend)
@@ -648,6 +830,7 @@ async def run_structured_log_agent(
         if model and not _modern_rewardkit_backend(backend):
             command.extend(backend.model_args(model))
         append_reasoning_effort(agent_name, command, reasoning_effort)
+        append_service_tier(agent_name, command, service_tier)
         isolation_config = configure_log_only_agent(agent_name, command, workspace)
         process = await asyncio.create_subprocess_exec(
             *command,
@@ -661,6 +844,32 @@ async def run_structured_log_agent(
             cwd=workspace,
             env=log_agent_environment(),
         )
+        process_started = datetime.now(UTC)
+        if telemetry_path is not None:
+            _append_llm_telemetry(
+                telemetry_path,
+                {
+                    **(telemetry_context or {}),
+                    "event": "started",
+                    "recorded_at": process_started.isoformat(),
+                    "agent": agent_name,
+                    "model": model,
+                    "request_started_at": request_started.isoformat(),
+                    "process_started_at": process_started.isoformat(),
+                    "prompt_chars": len(prompt),
+                    "prompt_tokens_estimate": (len(prompt) + 3) // 4,
+                },
+            )
+            telemetry_heartbeat_task = asyncio.create_task(
+                _stream_llm_telemetry(
+                    telemetry_path,
+                    telemetry_context or {},
+                    agent_name,
+                    model,
+                    process_started,
+                    time.perf_counter(),
+                )
+            )
         try:
             stdout, stderr = await asyncio.wait_for(
                 process.communicate(prompt_input),
@@ -673,9 +882,11 @@ async def run_structured_log_agent(
             raise TimeoutError(
                 f"{agent_name} log evaluator timed out after {timeout_sec} seconds"
             ) from None
+        response_received = datetime.now(UTC)
         raw_stdout, raw_stderr = _write_process_logs(
             workspace, agent_name, stdout, stderr
         )
+        _raise_if_service_tier_omitted(raw_stderr, service_tier)
         if process.returncode != 0:
             raise RuntimeError(
                 f"{agent_name} log evaluator exited with {process.returncode}: "
@@ -692,8 +903,52 @@ async def run_structured_log_agent(
         parsed = json.loads(parsed_output)
         if not isinstance(parsed, dict):
             raise RuntimeError("Log evaluator returned a non-object JSON value")
+        outcome = "success"
         return parsed, raw_stdout
+    except Exception as exc:
+        error_type = type(exc).__name__
+        raise
     finally:
+        if telemetry_path is not None:
+            if telemetry_heartbeat_task is not None:
+                telemetry_heartbeat_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await telemetry_heartbeat_task
+            _append_llm_telemetry(
+                telemetry_path,
+                {
+                    **(telemetry_context or {}),
+                    "event": "finished",
+                    "recorded_at": datetime.now(UTC).isoformat(),
+                    "agent": agent_name,
+                    "model": model,
+                    "request_started_at": request_started.isoformat(),
+                    "process_started_at": (
+                        process_started.isoformat() if process_started else None
+                    ),
+                    "response_received_at": (
+                        response_received.isoformat() if response_received else None
+                    ),
+                    "wall_time_ms": round(
+                        (time.perf_counter() - request_started_clock) * 1000, 1
+                    ),
+                    "model_process_time_ms": (
+                        round(
+                            (response_received - process_started).total_seconds()
+                            * 1000,
+                            1,
+                        )
+                        if process_started and response_received
+                        else None
+                    ),
+                    "prompt_chars": len(prompt),
+                    "prompt_tokens_estimate": (len(prompt) + 3) // 4,
+                    "output_chars": len(raw_stdout),
+                    "output_tokens_estimate": (len(raw_stdout) + 3) // 4,
+                    "outcome": outcome,
+                    "error_type": error_type,
+                },
+            )
         await _stop_backend(backend)
         if isolation_config is not None:
             isolation_config.unlink(missing_ok=True)

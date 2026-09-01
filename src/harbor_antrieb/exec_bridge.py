@@ -7,13 +7,14 @@ import os
 import re
 import sys
 import time
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
 from harbor_antrieb.client import AntriebClient
 from harbor_antrieb.errors import ClusterExpiredError
-
+from harbor_antrieb.shell import preferred_shell_command
 
 _AUDIT_TEXT_LIMIT = 16 * 1024
 _SECRET_ASSIGNMENT = re.compile(
@@ -92,6 +93,21 @@ def _exec_result_details(result: dict[str, Any]) -> dict[str, Any]:
         "stdout": redact_text(str(payload.get("stdout") or "")),
         "stderr": redact_text(str(payload.get("stderr") or "")),
     }
+
+
+def _attach_command_id(result: dict[str, Any], command_id: str) -> dict[str, Any]:
+    """Expose the audit identifier to the executor without changing provider data."""
+
+    enriched = dict(result)
+    content = list(result.get("content", []))
+    content.append(
+        {
+            "type": "text",
+            "text": f"Harbor-Antrieb evidence command ID: {command_id}",
+        }
+    )
+    enriched["content"] = content
+    return enriched
 
 
 class RawToolClient(Protocol):
@@ -207,12 +223,15 @@ class ExecBridge:
         node: str,
         command: str,
         outcome: str,
+        *,
+        command_id: str,
         **details: Any,
     ) -> None:
         if self.audit_log is None:
             return
         entry = {
             "timestamp": datetime.now(UTC).isoformat(),
+            "command_id": command_id,
             "node": node,
             "command": command,
             "outcome": outcome,
@@ -332,18 +351,20 @@ class ExecBridge:
         if secret_env is not None and not isinstance(secret_env, dict):
             raise ValueError("secret_env must be an object")
         self._assert_node(node)
+        command_id = f"cmd-{uuid.uuid4().hex[:16]}"
         if self.max_exec_calls is not None and self.exec_calls >= self.max_exec_calls:
             self._audit(
                 node,
                 command,
                 "budget_exhausted",
+                command_id=command_id,
                 max_exec_calls=self.max_exec_calls,
             )
             raise RuntimeError(
                 f"exec command budget exhausted ({self.max_exec_calls} calls)"
             )
         self.exec_calls += 1
-        self._audit(node, command, "requested")
+        self._audit(node, command, "requested", command_id=command_id)
         started_at = time.monotonic()
         try:
             result = await self.client.call_tool_raw(
@@ -351,7 +372,7 @@ class ExecBridge:
                 {
                     "session_id": self.session_id,
                     "node": node,
-                    "command": command,
+                    "command": preferred_shell_command(command),
                     **({"secret_env": secret_env} if secret_env is not None else {}),
                 },
             )
@@ -360,6 +381,7 @@ class ExecBridge:
                 node,
                 command,
                 "cluster_expired",
+                command_id=command_id,
                 error=str(exc),
                 duration_ms=round((time.monotonic() - started_at) * 1000),
             )
@@ -370,6 +392,7 @@ class ExecBridge:
                 node,
                 command,
                 "failed",
+                command_id=command_id,
                 error=f"{type(exc).__name__}: {exc}",
                 duration_ms=round((time.monotonic() - started_at) * 1000),
             )
@@ -378,10 +401,15 @@ class ExecBridge:
             node,
             command,
             "completed",
+            command_id=command_id,
             duration_ms=round((time.monotonic() - started_at) * 1000),
             **_exec_result_details(result),
         )
-        return {"jsonrpc": "2.0", "id": request_id, "result": result}
+        return {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": _attach_command_id(result, command_id),
+        }
 
 
 async def _serve(bridge: ExecBridge) -> None:

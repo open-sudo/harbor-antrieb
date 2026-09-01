@@ -8,10 +8,12 @@ from typing import Any, override
 
 import pytest
 
+from harbor.environments.base import ExecResult
 from harbor.models.task.config import EnvironmentConfig
 from harbor.models.trial.paths import TrialPaths
 from harbor_antrieb.environment import AntriebEnvironment
-from harbor_antrieb.errors import ClusterExpiredError
+from harbor_antrieb.errors import ClusterExpiredError, PROVIDER_ENV_ERROR_MARKER
+from harbor_antrieb.shell import preferred_shell_command
 
 
 class FakeClient:
@@ -115,6 +117,19 @@ async def test_environment_owns_cluster_lifecycle(
     assert all(
         "secret" not in arguments.get("command", "") for _, arguments in client.calls
     )
+    collector_dir = (
+        environment.trial_paths.trial_dir / "collector" / "attempts" / "01"
+    )
+    collector_manifest = json.loads((collector_dir / "manifest.json").read_text())
+    assert collector_manifest["phases"]["after_prepare"] == {
+        "status": "alias",
+        "same_as": "before_prepare",
+        "recorded_at": collector_manifest["phases"]["after_prepare"]["recorded_at"],
+        "lifecycle_outcome": "not_configured",
+    }
+    assert sorted(
+        path.name for path in (collector_dir / "snapshots").iterdir()
+    ) == ["before-prepare.json"]
 
     await environment.stop(delete=False)
 
@@ -164,7 +179,12 @@ async def test_environment_recreates_and_repeats_harness_preparation(
     monkeypatch.setattr("harbor_antrieb.environment.AntriebClient", RecreateClient)
     environment = make_environment(
         tmp_path,
-        'cluster = ["ubuntu24.04 x2"]\nmax_clusters = 2\n',
+        (
+            'cluster = ["ubuntu24.04 x2"]\n'
+            "max_clusters = 2\n"
+            "[prepare]\n"
+            "enabled = true\n"
+        ),
     )
     monkeypatch.setattr(environment, "initialize", fake_initialize)
     monkeypatch.setattr(environment, "prepare", fake_prepare)
@@ -471,6 +491,140 @@ async def test_environment_rejects_exec_after_reported_expiration(
     assert not any(name == "delete" for name, _ in client.calls[call_count:])
 
 
+def test_environment_wraps_managed_exec_with_requested_identity(tmp_path: Path) -> None:
+    environment = make_environment(tmp_path)
+
+    root = environment._wrap_execution_command("id -u", user="root")
+    sharedops = environment._wrap_execution_command("id -u", user="sharedops")
+
+    assert "sudo -n --" in root
+    assert "HOME=/root" in root
+    assert 'NODE_IP="${NODE_IP-}"' in root
+    assert 'CLUSTER_HOSTS="${CLUSTER_HOSTS-}"' in root
+    assert PROVIDER_ENV_ERROR_MARKER in root
+    assert "sudo -n -u sharedops --" in sharedops
+    assert "su -s /bin/sh sharedops" in sharedops
+    assert "command -v bash" in root
+    assert "exec bash -lc" in root
+    assert "else exec /bin/sh -c" in root
+
+
+def test_preferred_shell_uses_bash_when_available() -> None:
+    result = subprocess.run(
+        ["/bin/sh", "-c", preferred_shell_command('printf %s "$BASH_VERSION"')],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout
+
+
+def test_preferred_shell_falls_back_to_sh(tmp_path: Path) -> None:
+    result = subprocess.run(
+        [
+            "/bin/sh",
+            "-c",
+            preferred_shell_command(
+                "unset BASH_VERSION 2>/dev/null || true; "
+                'test -z "${BASH_VERSION-}" && printf %s sh'
+            ),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={"PATH": str(tmp_path)},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "sh"
+
+
+def test_environment_preserves_managed_and_secret_env_across_sudo(
+    tmp_path: Path,
+) -> None:
+    environment = make_environment(tmp_path)
+    wrapped = environment._wrap_execution_command(
+        'printf "%s|%s|%s" "$NODE_IP" "$CLUSTER_HOSTS" "$API_TOKEN"',
+        user="root",
+        forward_env_names=("API_TOKEN",),
+    )
+    script = (
+        'id() { if [ "$1" = -u ]; then printf "1000\\n"; '
+        'else command id "$@"; fi; }; '
+        'sudo() { shift; shift; env -i PATH="$PATH" "$@"; }; ' + wrapped
+    )
+
+    result = subprocess.run(
+        ["bash", "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            "PATH": "/usr/bin:/bin",
+            "NODE_NAME": "node1",
+            "NODE_INDEX": "0",
+            "NODE_IP": "10.20.30.40",
+            "CLUSTER_HOSTS": "10.20.30.40 node1\n10.20.30.41 node2",
+            "CLUSTER_SSH_PUBKEY": "public",
+            "CLUSTER_SSH_PRIVKEY": "private\nkey",
+            "API_TOKEN": "runtime-secret",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == (
+        "10.20.30.40|10.20.30.40 node1\n10.20.30.41 node2|runtime-secret"
+    )
+    assert "runtime-secret" not in wrapped
+    assert 'API_TOKEN="${API_TOKEN-}"' in wrapped
+
+
+def test_environment_rejects_invalid_forwarded_environment_name(
+    tmp_path: Path,
+) -> None:
+    environment = make_environment(tmp_path)
+
+    with pytest.raises(ValueError, match="Invalid environment variable name"):
+        environment._wrap_execution_command(
+            "true",
+            user="root",
+            forward_env_names=("BAD-NAME",),
+        )
+
+
+@pytest.mark.asyncio
+async def test_exec_on_node_forwards_secret_names_without_logging_values(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    environment = make_environment(tmp_path)
+    captured: dict[str, Any] = {}
+
+    async def fake_exec_on_node_raw(
+        node: str,
+        command: str,
+        secret_env: dict[str, str] | None = None,
+    ) -> ExecResult:
+        captured.update(node=node, command=command, secret_env=secret_env)
+        return ExecResult(stdout="", stderr="", return_code=0)
+
+    monkeypatch.setattr(environment, "_exec_on_node_raw", fake_exec_on_node_raw)
+
+    result = await environment.exec_on_node(
+        "node1",
+        'test -n "$API_TOKEN"',
+        secret_env={"API_TOKEN": "runtime-secret"},
+        user="root",
+    )
+
+    assert result.return_code == 0
+    assert captured["node"] == "node1"
+    assert captured["secret_env"] == {"API_TOKEN": "runtime-secret"}
+    assert 'API_TOKEN="${API_TOKEN-}"' in captured["command"]
+    assert "runtime-secret" not in captured["command"]
+
+
 def test_environment_applies_ai_prepare_cli_overrides(tmp_path: Path) -> None:
     environment = make_environment(
         tmp_path,
@@ -516,7 +670,7 @@ async def test_static_prepare_runs_setup_then_captures_baseline(
                 return {"session_id": "cluster-123", "nodes": ["node1", "node2"]}
             if name == "exec":
                 command = arguments["command"]
-                if command.startswith("observe-"):
+                if "observe-" in command:
                     return {
                         "stdout": f"baseline-{arguments['node']}\n",
                         "stderr": "",
@@ -570,18 +724,28 @@ async def test_static_prepare_runs_setup_then_captures_baseline(
 
     client = environment._client
     assert isinstance(client, PrepareClient)
+    collector_dir = (
+        environment.trial_paths.trial_dir / "collector" / "attempts" / "01"
+    )
+    assert sorted(
+        path.name for path in (collector_dir / "snapshots").iterdir()
+    ) == ["after-prepare.json", "before-prepare.json"]
+    authored_commands = (
+        "seed-node1",
+        "seed-node2",
+        "finish-seed",
+        "observe-node1",
+        "observe-node2",
+    )
     managed_commands = [
-        arguments["command"]
+        next(
+            authored
+            for authored in authored_commands
+            if authored in arguments["command"]
+        )
         for name, arguments in client.calls
         if name == "exec"
-        and arguments["command"]
-        in {
-            "seed-node1",
-            "seed-node2",
-            "finish-seed",
-            "observe-node1",
-            "observe-node2",
-        }
+        and any(authored in arguments["command"] for authored in authored_commands)
     ]
     assert set(managed_commands[:2]) == {"seed-node1", "seed-node2"}
     assert managed_commands[2] == "finish-seed"
@@ -625,10 +789,11 @@ async def test_failed_prepare_stops_later_stages_and_deletes_cluster(
             if name == "provision":
                 return {"session_id": "cluster-123", "nodes": ["node1", "node2"]}
             if name == "exec":
+                failed = "fail" in arguments["command"]
                 return {
                     "stdout": "",
-                    "stderr": "setup failed" if arguments["command"] == "fail" else "",
-                    "exit_code": 9 if arguments["command"] == "fail" else 0,
+                    "stderr": "setup failed" if failed else "",
+                    "exit_code": 9 if failed else 0,
                 }
             return {"deleted": True}
 
@@ -669,9 +834,15 @@ async def test_failed_prepare_stops_later_stages_and_deletes_cluster(
     commands = [
         arguments["command"] for name, arguments in client.calls if name == "exec"
     ]
-    assert "fail" in commands
-    assert "later" not in commands
-    assert "unused" not in commands
+    assert any("fail" in command for command in commands)
+    assert not any("later" in command for command in commands)
+    assert not any("unused" in command for command in commands)
+    collector_dir = (
+        environment.trial_paths.trial_dir / "collector" / "attempts" / "01"
+    )
+    manifest = json.loads((collector_dir / "manifest.json").read_text())
+    assert manifest["phases"]["after_prepare"]["lifecycle_outcome"] == "failed"
+    assert (collector_dir / "snapshots" / "after-prepare.json").is_file()
     assert client.calls[-1] == (
         "delete",
         {"type": "cluster", "name": "cluster-123"},
@@ -706,12 +877,13 @@ async def test_exec_uses_bash_for_harbor_pipefail(
     launch = launch_calls[-1]
     assert launch["session_id"] == "cluster-123"
     assert launch["node"] == "node1"
-    assert (
-        "env HOME=/root USER=root LOGNAME=root EXAMPLE=value bash -lc"
-        in launch["command"]
-    )
+    assert "env HOME=/root USER=root LOGNAME=root EXAMPLE=value" in launch["command"]
+    assert "command -v bash" in launch["command"]
+    assert "exec bash -lc" in launch["command"]
+    assert "else exec /bin/sh -c" in launch["command"]
     assert "command -v sudo" in launch["command"]
-    assert "sudo -n -- env HOME=/root" in launch["command"]
+    assert 'sudo -n -- env NODE_NAME="${NODE_NAME-}"' in launch["command"]
+    assert "env HOME=/root USER=root LOGNAME=root EXAMPLE=value" in launch["command"]
     assert "cd /tmp && set -o pipefail; true" in launch["command"]
     assert "/run/harbor_antrieb" not in launch["command"]
     syntax = subprocess.run(
@@ -787,10 +959,14 @@ async def test_detached_exec_protocol_with_local_shell(tmp_path: Path) -> None:
             self, name: str, arguments: dict[str, Any]
         ) -> dict[str, Any]:
             assert name == "exec"
+            provider_prefix = (
+                "export NODE_NAME=node1 NODE_INDEX=0 NODE_IP=192.0.2.10; "
+                "export CLUSTER_HOSTS='192.0.2.10 node1'; "
+            )
             process = await asyncio.create_subprocess_exec(
                 "bash",
                 "-c",
-                arguments["command"],
+                provider_prefix + arguments["command"],
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )

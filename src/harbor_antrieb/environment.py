@@ -5,6 +5,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import shlex
 import tarfile
 import tempfile
@@ -18,10 +19,12 @@ from harbor.environments.base import BaseEnvironment, ExecResult
 from harbor.environments.capabilities import EnvironmentCapabilities
 
 from harbor_antrieb.client import AntriebClient, AntriebMCPError
+from harbor_antrieb.collector import AntriebCollector
 from harbor_antrieb.config import AntriebDefinition, PrepareConfig
-from harbor_antrieb.errors import ClusterExpiredError
+from harbor_antrieb.errors import PROVIDER_ENV_ERROR_MARKER, ClusterExpiredError
 from harbor_antrieb.initializers import InitializationResult, run_initializers
 from harbor_antrieb.runbooks import BaseRunbook
+from harbor_antrieb.shell import preferred_shell_command
 
 
 class AntriebEnvironment(BaseEnvironment):
@@ -31,6 +34,21 @@ class AntriebEnvironment(BaseEnvironment):
     _REMOTE_EXEC_DIR = "/tmp"
     _EXEC_DONE_PREFIX = "__INFRASET_DONE__:"
     _EXEC_RUNNING = "__INFRASET_RUNNING__"
+    _MANAGED_ENV_NAMES = (
+        "NODE_NAME",
+        "NODE_INDEX",
+        "NODE_IP",
+        "CLUSTER_HOSTS",
+        "CLUSTER_SSH_PUBKEY",
+        "CLUSTER_SSH_PRIVKEY",
+    )
+    _REQUIRED_MANAGED_ENV_NAMES = (
+        "NODE_NAME",
+        "NODE_INDEX",
+        "NODE_IP",
+        "CLUSTER_HOSTS",
+    )
+    _ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
     def __init__(
         self,
@@ -75,6 +93,7 @@ class AntriebEnvironment(BaseEnvironment):
         self.initialization_results: tuple[InitializationResult, ...] = ()
         self._client: AntriebClient | None = None
         super().__init__(*args, **kwargs)
+        self.collector = AntriebCollector(self.trial_paths.trial_dir)
 
     @classmethod
     @override
@@ -243,7 +262,35 @@ class AntriebEnvironment(BaseEnvironment):
                 )
             await self.initialize()
             await self.ensure_dirs(self._mount_targets(writable_only=True))
-            await self.prepare()
+            prepare_enabled = self.definition.prepare.enabled
+            await self.collector.begin_attempt(
+                self,
+                attempt=self.clusters_provisioned,
+                prepare_enabled=prepare_enabled,
+            )
+            if not prepare_enabled:
+                await self.collector.finish_prepare(
+                    self,
+                    prepare_enabled=False,
+                    outcome="not_configured",
+                )
+            else:
+                try:
+                    await self.prepare()
+                except BaseException as exc:
+                    await self.collector.finish_prepare(
+                        self,
+                        prepare_enabled=True,
+                        outcome="failed",
+                        error=exc,
+                    )
+                    raise
+                else:
+                    await self.collector.finish_prepare(
+                        self,
+                        prepare_enabled=True,
+                        outcome="completed",
+                    )
         except BaseException:
             try:
                 await self.stop(delete=True)
@@ -343,10 +390,111 @@ class AntriebEnvironment(BaseEnvironment):
         node: str,
         command: str,
         secret_env: dict[str, str] | None = None,
+        user: str | int | None = None,
     ) -> ExecResult:
-        exec_result = await self._exec_on_node_raw(node, command, secret_env)
+        wrapped = self._wrap_execution_command(
+            command,
+            user=user,
+            forward_env_names=tuple(secret_env or ()),
+        )
+        exec_result = await self._exec_on_node_raw(node, wrapped, secret_env)
         await self._emit_output(exec_result)
         return exec_result
+
+    async def observe_on_node(
+        self,
+        node: str,
+        command: str,
+        secret_env: dict[str, str] | None = None,
+        user: str | int | None = None,
+    ) -> ExecResult:
+        """Run a provider-owned observation without echoing it to the task console."""
+
+        wrapped = self._wrap_execution_command(
+            command,
+            user=user,
+            forward_env_names=tuple(secret_env or ()),
+        )
+        return await self._exec_on_node_raw(node, wrapped, secret_env)
+
+    def _wrap_execution_command(
+        self,
+        command: str,
+        *,
+        user: str | int | None,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+        forward_env_names: tuple[str, ...] = (),
+    ) -> str:
+        """Wrap one command with the requested OS execution identity."""
+        invalid_env_names = [
+            name for name in forward_env_names if self._ENV_NAME.fullmatch(name) is None
+        ]
+        if invalid_env_names:
+            raise ValueError(
+                "Invalid environment variable name(s): "
+                + ", ".join(sorted(invalid_env_names))
+            )
+        forwarded_names = tuple(
+            dict.fromkeys((*self._MANAGED_ENV_NAMES, *forward_env_names))
+        )
+        provider_env_guard = " ".join(
+            'if [ -z "${'
+            + name
+            + "-}\" ]; then printf '%s\\n' "
+            + shlex.quote(f"{PROVIDER_ENV_ERROR_MARKER}: {name}")
+            + " >&2; exit 125; fi;"
+            for name in self._REQUIRED_MANAGED_ENV_NAMES
+        )
+        forwarded_assignments = " ".join(
+            f'{name}="${{{name}-}}"' for name in forwarded_names
+        )
+        wrapped = command
+        if cwd:
+            wrapped = f"cd {shlex.quote(cwd)} && {wrapped}"
+        wrapped = preferred_shell_command(wrapped, login=True)
+        effective_user = self._resolve_user(user)
+        merged_env: dict[str, str] = {}
+        if effective_user in ("root", 0, "0"):
+            merged_env.update(HOME="/root", USER="root", LOGNAME="root")
+        merged_env.update(self._merge_env(env) or {})
+        if merged_env:
+            assignments = " ".join(
+                f"{key}={shlex.quote(value)}" for key, value in merged_env.items()
+            )
+            wrapped = f"env {assignments} {wrapped}"
+        switched = f"env {forwarded_assignments} {wrapped}"
+        if effective_user in ("root", 0, "0"):
+            return (
+                provider_env_guard
+                + " "
+                + (
+                    'if [ "$(id -u)" -eq 0 ]; then '
+                    f"{wrapped}; "
+                    "elif command -v sudo >/dev/null 2>&1; then "
+                    f"sudo -n -- {switched}; "
+                    "else printf '%s\\n' "
+                    "'Harbor requested root execution, but sudo is unavailable' >&2; "
+                    "exit 126; fi"
+                )
+            )
+        if effective_user is None:
+            return provider_env_guard + " " + wrapped
+        target = str(effective_user)
+        as_target = f"su -s /bin/sh {shlex.quote(target)} -c {shlex.quote(switched)}"
+        return (
+            provider_env_guard
+            + " "
+            + (
+                f'if [ "$(id -un)" = {shlex.quote(target)} ]; then {wrapped}; '
+                f'elif [ "$(id -u)" -eq 0 ]; then {as_target}; '
+                "elif command -v sudo >/dev/null 2>&1; then "
+                f"sudo -n -u {shlex.quote(target)} -- {switched}; "
+                "else printf '%s\\n' "
+                f"'Harbor requested execution as {target}, but cannot switch users' >&2; "
+                "exit 126; fi"
+            )
+        )
 
     async def _exec_on_node_raw(
         self,
@@ -403,7 +551,7 @@ class AntriebEnvironment(BaseEnvironment):
         if timeout_sec is not None:
             executed_command = (
                 f"timeout --signal=TERM --kill-after=5s {max(1, timeout_sec)}s "
-                f"bash -c {shlex.quote(command)}"
+                f"/bin/sh -c {shlex.quote(command)}"
             )
         runner = (
             f"{executed_command}\n"
@@ -412,7 +560,7 @@ class AntriebEnvironment(BaseEnvironment):
             f"mv {shlex.quote(status_tmp_path)} {shlex.quote(status_path)}"
         )
         launcher = (
-            f"nohup setsid bash -c {shlex.quote(runner)} "
+            f"nohup setsid /bin/sh -c {shlex.quote(runner)} "
             f"> {shlex.quote(stdout_path)} 2> {shlex.quote(stderr_path)} "
             f"</dev/null & printf '%s\\n' \"$!\" > {shlex.quote(pid_path)}"
         )
@@ -422,7 +570,7 @@ class AntriebEnvironment(BaseEnvironment):
             f": > {shlex.quote(stdout_path)} && "
             f": > {shlex.quote(stderr_path)} && "
             f"rm -f {shlex.quote(status_path)} {shlex.quote(status_tmp_path)} "
-            f"{shlex.quote(pid_path)} && bash -c {shlex.quote(launcher)}"
+            f"{shlex.quote(pid_path)} && /bin/sh -c {shlex.quote(launcher)}"
         )
         launch_result = await self._exec_on_node_raw(node, launch_command)
         if launch_result.return_code != 0:
@@ -506,36 +654,13 @@ class AntriebEnvironment(BaseEnvironment):
         user: str | int | None = None,
     ) -> ExecResult:
         assert self.definition is not None
-        wrapped = command
         effective_cwd = cwd or self.task_env_config.workdir
-        if effective_cwd:
-            wrapped = f"cd {shlex.quote(effective_cwd)} && {wrapped}"
-        wrapped = f"bash -lc {shlex.quote(wrapped)}"
-        effective_user = self._resolve_user(user)
-        merged_env: dict[str, str] = {}
-        if effective_user in (None, "root", 0, "0"):
-            merged_env.update(HOME="/root", USER="root", LOGNAME="root")
-        merged_env.update(self._merge_env(env) or {})
-        if merged_env:
-            assignments = " ".join(
-                f"{key}={shlex.quote(value)}" for key, value in merged_env.items()
-            )
-            wrapped = f"env {assignments} {wrapped}"
-        if effective_user in ("root", 0, "0"):
-            wrapped = (
-                'if [ "$(id -u)" -eq 0 ]; then '
-                f"{wrapped}; "
-                "elif command -v sudo >/dev/null 2>&1; then "
-                f"sudo -n -- {wrapped}; "
-                "else printf '%s\\n' "
-                "'Harbor requested root execution, but sudo is unavailable' >&2; "
-                "exit 126; fi"
-            )
-        elif effective_user is not None:
-            wrapped = (
-                f"su -s /bin/bash {shlex.quote(str(effective_user))} -c "
-                f"{shlex.quote(wrapped)}"
-            )
+        wrapped = self._wrap_execution_command(
+            command,
+            user=user,
+            cwd=effective_cwd,
+            env=env,
+        )
         return await self._exec_detached(
             self.definition.control_node, wrapped, timeout_sec
         )

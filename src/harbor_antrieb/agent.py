@@ -16,7 +16,6 @@ from harbor_antrieb.errors import ClusterExpiredError
 from harbor_antrieb.exec_bridge import redact_data, redact_text
 from harbor_antrieb.runbooks import render_platform_references
 
-
 _POSTMORTEM_AUDIT_BUDGET = 20 * 1024
 _POSTMORTEM_STDOUT_BUDGET = 4 * 1024
 _POSTMORTEM_STDERR_BUDGET = 8 * 1024
@@ -34,8 +33,28 @@ def _executor_schema() -> dict[str, Any]:
                 "type": "array",
                 "items": {"type": "string"},
             },
+            "evidence": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 64,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "requirement": {"type": "string"},
+                        "command_ids": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 24,
+                            "items": {"type": "string"},
+                        },
+                        "summary": {"type": "string"},
+                    },
+                    "required": ["requirement", "command_ids", "summary"],
+                    "additionalProperties": False,
+                },
+            },
         },
-        "required": ["status", "summary", "actions_performed"],
+        "required": ["status", "summary", "actions_performed", "evidence"],
         "additionalProperties": False,
     }
 
@@ -332,13 +351,39 @@ The benchmark machines are an Antrieb managed cluster backed by Antrieb. You run
 outside that cluster and must use only the Antrieb exec tool to inspect or modify
 it. Address each node directly through the tool; do not use one node as the control
 plane for another.
+Every exec call pre-exports NODE_NAME and NODE_IP. When a command must reach a
+service on its managed node, target "$NODE_IP" by default. Do not assume localhost
+or 127.0.0.1 is a valid service endpoint unless loopback behavior is an explicit
+task requirement or live listener evidence first confirms it.
 Do not provision, replace, save, or delete the cluster. Do not install the agent,
-agent credentials, or harness tooling on any managed node. Do not reboot nodes or
-inject failures; the independent evaluator owns disruptive persistence and recovery
-tests. Configure the requested state so it will survive those tests.
+agent credentials, or harness tooling on any managed node.
+When an explicit task requirement concerns availability, failover, restart, reboot,
+recovery, resynchronization, or healing, perform the smallest safe, reversible
+disruption that demonstrates it. First capture a healthy baseline. Disrupt one
+representative service, member, or node at a time, preserve quorum, and retain an
+independent recovery path. Prefer stopping the task service when that represents the
+required failure. Reboot only when reboot behavior is explicit or a service-level
+test cannot establish the outcome. Never power off a node, sever the management
+path, or perform a disruption you cannot reverse. Exercise the required behavior
+while disrupted, restore the component, wait for recovery, and verify current state
+and data before finishing.
 Generate credentials on the managed nodes. Pass sensitive values through secret_env
 when a command needs them; do not put literal credentials in tool commands or your
 final report.
+
+Before returning completed, capture direct command proof for every material task
+outcome. Every exec result includes a Harbor-Antrieb evidence command ID. In the
+final evidence array, map each material requirement to the IDs of the commands that
+best demonstrate it and briefly state what they observed. For a behavioral
+resilience requirement, include command IDs from the healthy baseline, active
+disruption, required degraded behavior, restoration, and recovered state.
+Configuration, topology, restart policy, or redundancy metadata alone is supporting
+evidence, not proof of behavior. If the provider cannot safely perform a required
+transition, capture that limitation and the available evidence rather than claiming
+the behavior was observed. Select only commands whose captured output is relevant.
+The independent verifier receives the complete command timeline as well as these
+selections, so this is evidence curation, not self-scoring. If blocked, return the
+evidence available so far.
 
 Managed nodes: {", ".join(nodes)}
 {retry_context}
@@ -451,6 +496,7 @@ Redacted executor CLI stderr:
             termination: str | None = None
             error = ""
             raw = ""
+            executor_error: BaseException | None = None
             try:
                 report, raw = await run_structured_agent(
                     agent_name=self.agent_name,
@@ -471,13 +517,51 @@ Redacted executor CLI stderr:
                     reasoning_effort=self.reasoning_effort,
                     service_tier=self.service_tier,
                     lease_expires_at=getattr(environment, "cluster_expires_at", None),
+                    telemetry_path=self.logs_dir / "llm-metrics.jsonl",
+                    telemetry_context={
+                        "role": "executor",
+                        "attempt": str(attempt),
+                    },
                 )
             except ClusterExpiredError as exc:
                 termination = "cluster_expired"
                 error = str(exc)
+                executor_error = exc
             except TimeoutError as exc:
                 termination = "executor_timed_out"
                 error = str(exc)
+                executor_error = exc
+            except BaseException as exc:
+                executor_error = exc
+                raise
+            finally:
+                collector = getattr(environment, "collector", None)
+                finish_executor = getattr(collector, "finish_executor", None)
+                if callable(finish_executor):
+                    collection_outcome = termination or (
+                        str(report.get("status", "completed"))
+                        if isinstance(report, dict)
+                        else "failed"
+                    )
+                    try:
+                        await finish_executor(
+                            environment,
+                            outcome=collection_outcome,
+                            error=executor_error,
+                        )
+                    except Exception as exc:  # noqa: BLE001 - preserve agent outcome
+                        (attempt_dir / "collector-error.json").write_text(
+                            json.dumps(
+                                {
+                                    "phase": "after_executor",
+                                    "error": redact_text(
+                                        f"{type(exc).__name__}: {exc}"
+                                    ),
+                                },
+                                indent=2,
+                            )
+                            + "\n"
+                        )
 
             safe_report: dict[str, Any] | None = None
             if report is not None:
@@ -517,6 +601,8 @@ Redacted executor CLI stderr:
                         redact_text(raw)
                     )
                     context.metadata = {
+                        "harbor_antrieb_executor": safe_report,
+                        "harbor_antrieb_attempt_history": history,
                         "infraset_executor": safe_report,
                         "infraset_attempt_history": history,
                     }
@@ -585,11 +671,14 @@ Redacted executor CLI stderr:
                     "status": "blocked",
                     "summary": redact_text(error),
                     "actions_performed": [],
+                    "evidence": [],
                 }
                 (self.logs_dir / "agent-output.json").write_text(
                     json.dumps(failure_report, indent=2)
                 )
                 context.metadata = {
+                    "harbor_antrieb_executor": failure_report,
+                    "harbor_antrieb_attempt_history": history,
                     "infraset_executor": failure_report,
                     "infraset_attempt_history": history,
                 }

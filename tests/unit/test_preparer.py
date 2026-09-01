@@ -80,6 +80,8 @@ async def test_ai_preparer_runs_agent_then_static_baseline(
     assert runner_kwargs["model"] == "test-model"
     assert runner_kwargs["nodes"] == ("node1", "node2")
     assert "Create a legacy application" in runner_kwargs["prompt"]
+    assert 'through "$NODE_IP" by default' in runner_kwargs["prompt"]
+    assert "use localhost or 127.0.0.1 only" in runner_kwargs["prompt"]
     assert "Antrieb commands use POSIX sh." in runner_kwargs["prompt"]
     output_dir = trial_paths.trial_dir / "prepare"
     assert (
