@@ -96,7 +96,12 @@ def _build_backend_command(
             None,
             prompt.encode(),
         )
-    return backend._build_command(prompt, schema), None, None
+    # Every non-codex modern backend (currently only claude-code) is expected
+    # to build a command that omits the prompt from argv and reads it from
+    # stdin instead, since the prompt can embed an arbitrarily large command
+    # transcript that would exceed the kernel's per-argument length limit if
+    # passed directly as a command-line argument.
+    return backend._build_command(prompt, schema), None, prompt.encode()
 
 
 def _attach_process_output(
