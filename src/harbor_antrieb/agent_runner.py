@@ -96,12 +96,20 @@ def _build_backend_command(
             None,
             prompt.encode(),
         )
-    # Every non-codex modern backend (currently only claude-code) is expected
-    # to build a command that omits the prompt from argv and reads it from
-    # stdin instead, since the prompt can embed an arbitrarily large command
-    # transcript that would exceed the kernel's per-argument length limit if
-    # passed directly as a command-line argument.
-    return backend._build_command(prompt, schema), None, prompt.encode()
+    # The installed rewardkit/harbor-rewardkit release embeds the prompt
+    # directly in the argv it builds for claude-code (`claude -p <prompt>
+    # ...`). That raises OSError: [Errno 7] Argument list too long once the
+    # prompt is large enough to exceed the kernel's per-argument length
+    # limit (MAX_ARG_STRLEN, 128 KiB on Linux) -- easily reached by a
+    # verifier prompt that embeds a full executor command transcript.
+    # `claude -p` reads the prompt from stdin when no prompt argument
+    # follows it, so strip the embedded prompt from argv here and send it
+    # over stdin instead, regardless of which rewardkit build is installed.
+    command = backend._build_command(prompt, schema)
+    if prompt in command:
+        command = [arg for arg in command if arg != prompt]
+        return command, None, prompt.encode()
+    return command, None, None
 
 
 def _attach_process_output(
