@@ -294,6 +294,27 @@ class AntriebHostAgent(BaseAgent):
     def _clusters_provisioned(environment: BaseEnvironment) -> int:
         return int(getattr(environment, "clusters_provisioned", 1))
 
+    def _has_scorable_evidence(self) -> bool:
+        """Report whether a failed run still left enough behind to verify.
+
+        The verifier reads its inputs from the trial directory rather than
+        from a live cluster, so an executor that exhausted its cluster lease
+        mid-task still leaves the complete command timeline and the lifecycle
+        snapshots it needs. Raising in that situation makes Harbor skip
+        verification and discard evidence that was already collected, so such
+        a run has to end normally and be scored instead.
+        """
+        audits = [self.logs_dir / "executor-commands.jsonl"]
+        audits.extend(
+            sorted((self.logs_dir / "attempts").glob("*/executor-commands.jsonl"))
+        )
+        if not any(path.is_file() and path.stat().st_size > 0 for path in audits):
+            return False
+        snapshots = (self.logs_dir.parent / "collector").glob(
+            "attempts/*/snapshots/after-executor.json"
+        )
+        return any(path.is_file() for path in snapshots)
+
     @staticmethod
     def _assert_active(environment: BaseEnvironment) -> None:
         assert_active = getattr(environment, "assert_cluster_active", None)
@@ -682,9 +703,18 @@ Redacted executor CLI stderr:
                     "infraset_executor": failure_report,
                     "infraset_attempt_history": history,
                 }
+                if self._has_scorable_evidence():
+                    # End the run normally so the trial proceeds to
+                    # verification. The executor did not finish, but it left a
+                    # complete command timeline and lifecycle snapshots, and
+                    # the verifier scores those from the trial directory. The
+                    # failure itself stays visible in the executor report and
+                    # in attempt-history.json.
+                    return
                 raise RuntimeError(
                     "Antrieb executor exhausted its managed-cluster quota "
-                    f"after {attempt} attempt(s); see attempt-history.json"
+                    f"after {attempt} attempt(s) and left no scorable "
+                    "evidence; see attempt-history.json"
                 )
 
             await self._recreate(environment)
